@@ -40,6 +40,8 @@ class Media(Document):
     file_type = fields.StrField(allow_none=True)
     mime_type = fields.StrField(allow_none=True)
     caption = fields.StrField(allow_none=True)
+    # NEW FIELD: Category to separate Anime and Manga
+    category = fields.StrField(default="anime", allow_none=True)
 
     class Meta:
         indexes = ('$file_name', )
@@ -54,6 +56,8 @@ class Media2(Document):
     file_type = fields.StrField(allow_none=True)
     mime_type = fields.StrField(allow_none=True)
     caption = fields.StrField(allow_none=True)
+    # NEW FIELD: Category to separate Anime and Manga
+    category = fields.StrField(default="anime", allow_none=True)
 
     class Meta:
         indexes = ('$file_name', )
@@ -70,40 +74,46 @@ async def choose_mediaDB():
         saveMedia = Media2
 
 async def save_file(bot, media):
-  """Save file in database"""
-  global saveMedia
-  file_id, file_ref = unpack_new_file_id(media.file_id)
-  file_name = re.sub(r"(_|\-|\.|\+)", " ", str(media.file_name))
-  try:
-    if saveMedia == Media2: 
-        if await Media.count_documents({'file_id': file_id}, limit=1):
-            logger.warning(f'{file_name} is already saved in primary database!')
-            return False, 0
-    file = saveMedia(
-        file_id=file_id,
-        file_ref=file_ref,
-        file_name=file_name,
-        file_size=media.file_size,
-        file_type=media.file_type,
-        mime_type=media.mime_type,
-        caption=media.caption.html if media.caption else None,
-    )
-  except ValidationError:
-    logger.exception('Error occurred while saving file in database')
-    return False, 2
-  else:
-    try:
-      await file.commit()
-    except DuplicateKeyError:
-      logger.warning(f'{getattr(media, "file_name", "NO_FILE")} is already saved in database')   
-      return False, 0
-    else:
-        logger.info(f'{getattr(media, "file_name", "NO_FILE")} is saved to database')
-        if await get_status(bot.me.id):
-            await send_msg(bot, file.file_name, file.caption)
-        return True, 1
+    """Save file in database"""
+    global saveMedia
+    file_id, file_ref = unpack_new_file_id(media.file_id)
+    file_name = re.sub(r"(_|\-|\.|\+)", " ", str(media.file_name))
+    
+    # Fetch category dynamically, default to anime
+    category = getattr(media, 'category', 'anime')
 
-async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
+    try:
+        if saveMedia == Media2: 
+            if await Media.count_documents({'file_id': file_id}, limit=1):
+                logger.warning(f'{file_name} is already saved in primary database!')
+                return False, 0
+        file = saveMedia(
+            file_id=file_id,
+            file_ref=file_ref,
+            file_name=file_name,
+            file_size=media.file_size,
+            file_type=media.file_type,
+            mime_type=media.mime_type,
+            caption=media.caption.html if media.caption else None,
+            category=category # Category saved here!
+        )
+    except ValidationError:
+        logger.exception('Error occurred while saving file in database')
+        return False, 2
+    else:
+        try:
+            await file.commit()
+        except DuplicateKeyError:
+            logger.warning(f'{getattr(media, "file_name", "NO_FILE")} is already saved in database')   
+            return False, 0
+        else:
+            logger.info(f'{getattr(media, "file_name", "NO_FILE")} is saved to database under {category} category')
+            if await get_status(bot.me.id):
+                await send_msg(bot, file.file_name, file.caption)
+            return True, 1
+
+# Added 'category' parameter to filter results
+async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False, category=None):
     """For given query return (results, next_offset)"""
     if chat_id is not None:
         settings = await get_settings(int(chat_id))
@@ -119,6 +129,7 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
                 max_results = 10
             else:
                 max_results = int(MAX_B_TN)
+    
     query = query.strip()
     if not query:
         raw_pattern = '.'
@@ -133,22 +144,26 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
         return []
 
     if USE_CAPTION_FILTER:
-        filter = {'$or': [{'file_name': regex}, {'caption': regex}]}
+        search_filter = {'$or': [{'file_name': regex}, {'caption': regex}]}
     else:
-        filter = {'file_name': regex}
+        search_filter = {'file_name': regex}
 
     if file_type:
-        filter['file_type'] = file_type
+        search_filter['file_type'] = file_type
+        
+    # Apply category filter if requested
+    if category:
+        search_filter['category'] = category
 
-    total_results = ((await Media.count_documents(filter))+(await Media2.count_documents(filter)))
+    total_results = ((await Media.count_documents(search_filter))+(await Media2.count_documents(search_filter)))
 
     #verifies max_results is an even number or not
     if max_results%2 != 0: 
         logger.info(f"Since max_results is an odd number ({max_results}), bot will use {max_results+1} as max_results to make it even.")
         max_results += 1
 
-    cursor = Media.find(filter)
-    cursor2 = Media2.find(filter)
+    cursor = Media.find(search_filter)
+    cursor2 = Media2.find(search_filter)
 
     cursor.sort('$natural', -1)
     cursor2.sort('$natural', -1)
@@ -156,12 +171,12 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     cursor2.skip(offset).limit(max_results)
 
     fileList2 = await cursor2.to_list(length=max_results)
-    if len(fileList2)<max_results:
-        next_offset = offset+len(fileList2)
-        cursorSkipper = (next_offset-(await Media2.count_documents(filter)))
+    if len(fileList2) < max_results:
+        next_offset = offset + len(fileList2)
+        cursorSkipper = (next_offset - (await Media2.count_documents(search_filter)))
         cursor.skip(cursorSkipper if cursorSkipper>=0 else 0).limit(max_results-len(fileList2))
         fileList1 = await cursor.to_list(length=(max_results-len(fileList2)))
-        files = fileList2+fileList1
+        files = fileList2 + fileList1
         next_offset = next_offset + len(fileList1)
     else:
         files = fileList2
@@ -171,7 +186,7 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     return files, next_offset, total_results
 
 
-async def get_bad_files(query, file_type=None, filter=False):
+async def get_bad_files(query, file_type=None, filter=False, category=None):
     """For given query return (results, next_offset)"""
     query = query.strip()
     if not query:
@@ -187,20 +202,23 @@ async def get_bad_files(query, file_type=None, filter=False):
         return []
 
     if USE_CAPTION_FILTER:
-        filter = {'$or': [{'file_name': regex}, {'caption': regex}]}
+        search_filter = {'$or': [{'file_name': regex}, {'caption': regex}]}
     else:
-        filter = {'file_name': regex}
+        search_filter = {'file_name': regex}
 
     if file_type:
-        filter['file_type'] = file_type
+        search_filter['file_type'] = file_type
+        
+    if category:
+        search_filter['category'] = category
 
-    cursor = Media.find(filter)
-    cursor2 = Media2.find(filter)
+    cursor = Media.find(search_filter)
+    cursor2 = Media2.find(search_filter)
 
     cursor.sort('$natural', -1)
     cursor2.sort('$natural', -1)
 
-    files = ((await cursor2.to_list(length=(await Media2.count_documents(filter))))+(await cursor.to_list(length=(await Media.count_documents(filter)))))
+    files = ((await cursor2.to_list(length=(await Media2.count_documents(search_filter))))+(await cursor.to_list(length=(await Media.count_documents(search_filter)))))
 
     total_results = len(files)
 
@@ -254,7 +272,7 @@ def unpack_new_file_id(new_file_id):
 async def send_msg(bot, filename, caption): 
     try:
         filename = re.sub(r'\(\@\S+\)|\[\@\S+\]|\b@\S+|\bwww\.\S+', '', filename).strip()
-        caption = re.sub(r'\(\@\S+\)|\[\@\S+\]|\b@\S+|\bwww\.\S+', '', caption).strip()
+        caption = re.sub(r'\(\@\S+\)|\[\@\S+\]|\b@\S+|\bwww\.\S+', '', str(caption)).strip()
         
         year_match = re.search(r"\b(19|20)\d{2}\b", caption)
         year = year_match.group(0) if year_match else None
@@ -300,8 +318,8 @@ async def send_msg(bot, filename, caption):
             else:              
                 await bot.send_message(chat_id=MOVIE_UPDATE_CHANNEL, text=text, reply_markup=InlineKeyboardMarkup(btn))
 
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Error in send_msg: {e}")
 
 async def get_qualities(text, qualities: list):
     """Get all Quality from text"""
@@ -311,9 +329,3 @@ async def get_qualities(text, qualities: list):
             quality.append(q)
     quality = ", ".join(quality)
     return quality[:-2] if quality.endswith(", ") else quality
-
-
-
-
-
-
