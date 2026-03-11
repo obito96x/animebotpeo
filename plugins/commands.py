@@ -23,7 +23,7 @@ except ImportError:
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
-
+OWNER_USERNAME = I_killed_my_clan
 # =========================================
 # 🚀 START COMMAND (INSTANT - NO ANIMATION)
 # =========================================
@@ -34,7 +34,7 @@ async def start(client, message):
         buttons = [[
             InlineKeyboardButton('➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀᴛ ➕', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
         ],[
-            InlineKeyboardButton('👨‍💻 ᴏᴡɴᴇʀ', url=f"https://t.me/{OWNER_USERNAME}") 
+            InlineKeyboardButton('👨‍💻 ᴏᴡɴᴇʀ', url=f"https://t.me/I_killed_my_clan") 
         ]]
         await message.reply("<b>Bot is Active! Send any Anime name to search.</b>", reply_markup=InlineKeyboardMarkup(buttons))
         
