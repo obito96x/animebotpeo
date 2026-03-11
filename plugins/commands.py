@@ -8,7 +8,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from database.ia_filterdb import Media
+from database.ia_filterdb import Media, Media2
 from database.users_chats_db import db
 from plugins.pmfilter import auto_filter 
 from info import *
@@ -24,7 +24,8 @@ logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 
-MY_OWNER = getattr(temp, 'U_NAME', 'i_killed_my_clan')
+# 🔴 FIX: Tumhara username direct yahan daal diya hai taaki error na aaye!
+OWNER_USERNAME = "i_killed_my_clan"
 
 # =========================================
 # 🚀 START COMMAND & DEEP LINKS
@@ -139,8 +140,10 @@ async def show_letter_results(client, query):
     await query.answer("Fetching titles... ⏳", show_alert=False)
     
     regex_pattern = r"^[0-9]" if letter == "num" else f"^{letter}"
-    cursor = Media.find({"file_name": {"$regex": regex_pattern, "$options": "i"}, "category": category})
-    files = await cursor.to_list(length=300) # Fetch up to 300 to ensure we get good coverage
+    cursor1 = Media.find({"file_name": {"$regex": regex_pattern, "$options": "i"}, "category": category})
+    cursor2 = Media2.find({"file_name": {"$regex": regex_pattern, "$options": "i"}, "category": category})
+    
+    files = await cursor1.to_list(length=300) + await cursor2.to_list(length=300)
     
     if not files:
         return await query.message.edit_caption(caption=f"<b>❌ No files found starting with '{letter}'</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]))
@@ -153,7 +156,7 @@ async def show_letter_results(client, query):
         clean_name = re.split(r'\s-\s|\sEp\s|\sE\d', clean_name)[0]
         clean_name = clean_name.replace(".", " ").replace("_", " ").strip()
         
-        # Double check letter matches (to avoid tags messing up order)
+        # Double check letter matches
         if clean_name and (letter == "num" or clean_name.upper().startswith(letter)):
             names.add(clean_name)
             
