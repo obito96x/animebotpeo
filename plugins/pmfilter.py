@@ -19,7 +19,6 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, UserIsBlocked, MessageNotModified, PeerIdInvalid
 from utils import *
 from plugins.anilist import fetch_anime_details as get_anime_info
-
 from fuzzywuzzy import process
 from database.users_chats_db import db
 from database.config_db import mdb
