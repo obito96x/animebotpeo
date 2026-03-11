@@ -23,7 +23,7 @@ except ImportError:
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
-OWNER_USERNAME = I_killed_my_clan
+
 # =========================================
 # 🚀 START COMMAND (INSTANT - NO ANIMATION)
 # =========================================
