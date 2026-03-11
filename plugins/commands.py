@@ -5,6 +5,7 @@ import base64
 import logging
 import random
 import asyncio
+import string
 import time
 import pytz
 from datetime import datetime
@@ -23,9 +24,9 @@ from info import *
 from utils import *
 from database.connections_mdb import active_connection
 
-# Agar tera anilist plugin available hai
+# Anilist Fetcher (Agar available hai)
 try:
-    from plugins.anilist import get_anime_info
+    from plugins.anilist import fetch_anime_details as get_anime_info
 except ImportError:
     get_anime_info = None
 
@@ -44,13 +45,14 @@ def get_greeting():
     else: return "ɢᴏᴏᴅ ɴɪɢʜᴛ 👋"
 
 # =========================================
-# START COMMAND
+# 🚀 START COMMAND & DEEP LINKS
 # =========================================
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
     if EMOJI_MODE:    
         await message.react(emoji=random.choice(REACTIONS), big=True) 
         
+    # GROUP START
     if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
         buttons = [[
                     InlineKeyboardButton('➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀᴛ ➕', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
@@ -67,40 +69,41 @@ async def start(client, message):
             await db.add_chat(message.chat.id, message.chat.title)
         return 
         
+    # NEW USER ENTRY
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(message.from_user.id, message.from_user.first_name)
         await client.send_message(LOG_CHANNEL, script.LOG_TEXT_P.format(message.from_user.id, message.from_user.mention))
         
-    if len(message.command) != 2:
-        buttons = [[
-                    InlineKeyboardButton(text="🏡", callback_data="start"),
-                    InlineKeyboardButton(text="🛡", callback_data="group_info"),
-                    InlineKeyboardButton(text="💳", callback_data="about"),
-                    InlineKeyboardButton(text="🖥", callback_data="main"),
-                ],[
-                    InlineKeyboardButton('➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ➕', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
-                ],[
-                    InlineKeyboardButton('• ᴄᴏᴍᴍᴀɴᴅꜱ •', callback_data='main'),
-                    InlineKeyboardButton('• ᴘʀᴇᴍɪᴜᴍ •', callback_data='premium_info')
-                  ]]
-        reply_markup = InlineKeyboardMarkup(buttons)
-        gtxt = get_greeting()
-        
-        m=await message.reply_text("<i>ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ <b>ʟᴜᴄʏ</b>.\nʜᴏᴘᴇ ʏᴏᴜ'ʀᴇ ᴅᴏɪɴɢ ᴡᴇʟʟ...</i>")
-        await asyncio.sleep(0.4)
-        await m.edit_text("<b><i>ꜱᴛᴀʀᴛɪɴɢ...</i></b>")
-        await asyncio.sleep(0.4)
-        await m.delete()        
+    # PRIVATE START MENU (VIOLET BOT STYLE)
+    if len(message.command) == 1:
+        text = (
+            f"**Welcome to the Ultimate Anime & Manga Downloader, {message.from_user.first_name}! 🌟**\n\n"
+            "Explore complete collections, ongoing series, and download instantly.\n"
+            "Choose an option below to get started:"
+        )
+        buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"),
+                InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")
+            ],
+            [
+                InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""),
+                InlineKeyboardButton("🆘 Help Guide", callback_data="help")
+            ],
+            [
+                InlineKeyboardButton("👨‍💻 Admin", url=f"https://t.me/{OWNER_USERNAME}")
+            ]
+        ])
         
         await message.reply_photo(
             photo=random.choice(PICS),
-            caption=script.START_TXT.format(message.from_user.mention, gtxt, temp.U_NAME, temp.B_NAME),
-            reply_markup=reply_markup,
+            caption=text,
+            reply_markup=buttons,
             parse_mode=enums.ParseMode.HTML
         )
         return
 
-    # Handle deep links (getfile, batch, etc.)
+    # DEEP LINKS HANDLING (Files, Batch, GetFile)
     if len(message.command) == 2 and message.command[1].startswith('getfile'):
         movies = message.command[1].split("-", 1)[1] 
         movie = movies.replace('-',' ')
@@ -108,7 +111,6 @@ async def start(client, message):
         await auto_filter(client, message) 
         return
         
-    # Standard deep link processing
     data = message.command[1]
     try:
         pre, file_id = data.split('_', 1)
@@ -144,7 +146,7 @@ async def start(client, message):
                     reply_markup=InlineKeyboardMarkup(btn)
                 )
             except FloodWait as e:
-                await asyncio.sleep(e.x)
+                await asyncio.sleep(e.value)
                 await client.send_cached_media(
                     chat_id=message.from_user.id, file_id=msg.get("file_id"),
                     caption=f_caption, protect_content=msg.get('protect', False),
@@ -156,11 +158,90 @@ async def start(client, message):
         await sts.delete()
         return
 
-    # Add other deep links handling (all, short, files, etc.) 
-    # [NOTE: Keeping it short and clean to save space, assuming the standard file send logic is kept intact]
+# =========================================
+# 🔠 A-Z ALPHABETICAL INDEX CALLBACKS
+# =========================================
+@Client.on_callback_query(filters.regex(r"^start$"))
+async def start_cb(client, query):
+    text = (
+        f"**Welcome to the Ultimate Anime & Manga Downloader, {query.from_user.first_name}! 🌟**\n\n"
+        "Explore complete collections, ongoing series, and download instantly.\n"
+        "Choose an option below to get started:"
+    )
+    buttons = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"),
+            InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")
+        ],
+        [
+            InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""),
+            InlineKeyboardButton("🆘 Help Guide", callback_data="help")
+        ],
+        [
+            InlineKeyboardButton("👨‍💻 Admin", url=f"https://t.me/{OWNER_USERNAME}")
+        ]
+    ])
+    await query.message.edit_caption(caption=text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
+
+@Client.on_callback_query(filters.regex(r"^browse_(anime|manga)$"))
+async def browse_callback(client, query):
+    category = query.data.split("_")[1]
+    buttons = []
+    row = []
+    for letter in string.ascii_uppercase:
+        row.append(InlineKeyboardButton(letter, callback_data=f"letter_{category}_{letter}"))
+        if len(row) == 4:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+        
+    buttons.append([InlineKeyboardButton("0-9 (Numbers)", callback_data=f"letter_{category}_num")])
+    buttons.append([InlineKeyboardButton("🔙 Back to Home", callback_data="start")])
+    
+    await query.message.edit_caption(
+        caption=f"<b>🗂️ {category.capitalize()} Alphabetical Index</b>\n\nSelect a starting letter to view available titles:", 
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+@Client.on_callback_query(filters.regex(r"^letter_(anime|manga)_"))
+async def show_letter_results(client, query):
+    _, category, letter = query.data.split("_")
+    await query.answer("Fetching titles... ⏳", show_alert=False)
+    
+    regex_pattern = r"^[0-9]" if letter == "num" else f"^{letter}"
+    
+    # Query specific category from existing database (Anime ya Manga)
+    cursor1 = Media.find({"file_name": {"$regex": regex_pattern, "$options": "i"}, "category": category})
+    cursor2 = Media2.find({"file_name": {"$regex": regex_pattern, "$options": "i"}, "category": category})
+    
+    files = await cursor1.to_list(length=100) + await cursor2.to_list(length=100)
+    
+    if not files:
+        return await query.message.edit_caption(
+            caption=f"<b>❌ No {category.capitalize()} found starting with '{letter}'</b>", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]])
+        )
+        
+    names = set()
+    for f in files:
+        clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', f.file_name)
+        clean_name = clean_name.replace(".", " ").replace("_", " ").split('-')[0].strip()
+        if clean_name:
+            names.add(clean_name)
+            
+    text = f"<b>📁 Available {category.capitalize()} starting with '{letter}'</b>\n\n"
+    # Copy karne ke liye mono format use kar rahe hain
+    for name in sorted(names)[:50]:
+        text += f"▪️ <code>{name}</code>\n"
+        
+    await query.message.edit_caption(
+        caption=text, 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]])
+    )
 
 # =========================================
-# SEARCH COMMAND (ANILIST INTEGRATED)
+# 🔍 SEARCH COMMAND (ANILIST INTEGRATED)
 # =========================================
 @Client.on_message(filters.command(["search", "s"]))
 async def search_anime_cmd(client, message):
@@ -174,7 +255,7 @@ async def search_anime_cmd(client, message):
     await auto_filter(client, message)
 
 # =========================================
-# REQUEST COMMAND (ANILIST INTEGRATED)
+# 📥 REQUEST COMMAND (ANILIST INTEGRATED)
 # =========================================
 @Client.on_message(filters.command(["request", "req"]))
 async def request_anime(client, message):
@@ -183,7 +264,6 @@ async def request_anime(client, message):
         
     search_query = " ".join(message.command[1:])
     
-    # If AniList plugin is linked
     if get_anime_info:
         anime_info = await get_anime_info(search_query)
         if anime_info:
@@ -203,7 +283,6 @@ async def request_anime(client, message):
                 await message.reply_text(cap, reply_markup=InlineKeyboardMarkup(btn))
             return
 
-    # Fallback if Anilist fails
     btn = [[
         InlineKeyboardButton('✅ Submit Request', callback_data=f'req_submit_text'),
         InlineKeyboardButton('❌ Cancel', callback_data='close_data')
@@ -211,7 +290,7 @@ async def request_anime(client, message):
     await message.reply_text(f"<b>📝 ʀᴇǫᴜᴇꜱᴛ :</b> <u>{search_query}</u>\n\nDo you want to submit this to admins?", reply_markup=InlineKeyboardMarkup(btn))
 
 # =========================================
-# ADMIN & SETTINGS COMMANDS
+# ⚙️ ADMIN & SETTINGS COMMANDS
 # =========================================
 @Client.on_message(filters.command('settings'))
 async def settings(client, message):
@@ -239,7 +318,6 @@ async def settings(client, message):
     
     settings = await get_settings(grp_id)
     
-    # Using the helper function we discussed earlier to DRY the code
     try:
         from utils import get_settings_buttons
         reply_markup = InlineKeyboardMarkup(get_settings_buttons(settings, grp_id))
@@ -282,3 +360,4 @@ async def deletemultiplefiles(bot, message):
        InlineKeyboardButton("❌ No, Abort ! ❌", callback_data="close_data")
     ]]
     await message.reply_text(f"<b>Found {total} files for '{keyword}' !\n\nDo you want to delete?</b>", reply_markup=InlineKeyboardMarkup(btn))
+    
