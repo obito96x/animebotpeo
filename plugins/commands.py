@@ -24,6 +24,8 @@ logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 
+MY_OWNER = getattr(temp, 'U_NAME', 'i_killed_my_clan')
+
 # =========================================
 # 🚀 START COMMAND & DEEP LINKS
 # =========================================
