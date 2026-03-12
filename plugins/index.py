@@ -242,7 +242,7 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
         await query.answer(f"Fetching {cat.capitalize()} List...", show_alert=False)
         
         titles1 = await Media.collection.distinct("clean_title", {"category": cat})
-        titles2 = await Media2.collection.distinct("clean_title", {"category": cat})
+        titles2 = await Media.collection.distinct("clean_title", {"category": cat})
         all_titles = list(set(titles1 + titles2))
         
         text = f"**🗂️ Indexed {cat.capitalize()} Titles:**\n\n"
@@ -347,10 +347,11 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
             current = temp.CURRENT
             temp.CANCEL = False
             
-            # Fetch message IDs from latest down to 1
+            # Create list of message IDs from the forwarded message down to 1
+            # Adjusting if there was a setskip (current)
             message_ids = list(range(lst_msg_id - current, 0, -1))
             
-            # Fetch in chunks of 200 (Safe for Telegram Bots)
+            # Fetch in chunks of 200 to bypass Telegram limits securely
             for i in range(0, len(message_ids), 200):
                 if temp.CANCEL: break
                 chunk = message_ids[i:i+200]
@@ -368,6 +369,7 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                     if temp.CANCEL: break
                     current += 1
                     
+                    # Update status message every 100 files
                     if current % 100 == 0:
                         can = [[InlineKeyboardButton('Cancel', callback_data='index_cancel')]]
                         await msg.edit_text(
@@ -389,15 +391,19 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                         unsupported += 1
                         continue
                     
-                    # Extract file name safely for Manga Photos
+                    # 🔥 THE ULTIMATE BUG FIX: Extract file name safely for Manga Photos
                     filename = getattr(media, 'file_name', '')
                     if not filename:
                         if message.caption:
+                            # Use first line of caption for manga photos
                             filename = message.caption.split('\n')[0][:80]
                         elif message.media == enums.MessageMediaType.PHOTO:
                             filename = f"Manga_Photo_Ch_{message.id}.jpg"
                         else:
                             filename = f"Unknown_File_{message.id}"
+                            
+                    # Attach the filename back to the media object to prevent crash in ia_filterdb.py
+                    media.file_name = filename
                     
                     title, season, episode, quality = extract_file_info(filename, current, category)
                     
