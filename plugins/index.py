@@ -1,3 +1,4 @@
+
 import logging
 import asyncio
 import re
@@ -7,15 +8,90 @@ from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, ChatAdmin
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 from info import ADMINS, INDEX_REQ_CHANNEL as LOG_CHANNEL
-from database.ia_filterdb import save_file
+from database.ia_filterdb import save_file, Media, Media2
 from utils import temp
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 lock = asyncio.Lock()
 
-# Dictionary to store ongoing conversation state for adding channels
 ADD_CHANNEL_CONVERSATION = {}
+
+# ==========================================
+# 🧠 ADVANCED REGEX FILE PARSER (FOR DB INDEXING)
+# ==========================================
+SEP = r'[\s\.\-_]*'
+SEASON_EPISODE_PATTERNS = [
+    (re.compile(rf'\bS{SEP}(\d{{1,2}}){SEP}E{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\[S{SEP}(\d{{1,2}}){SEP}E{SEP}(\d{{1,4}})\]', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\b(\d{{1,2}}){SEP}[xX]{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\[(\d{{1,2}}){SEP}[xX]{SEP}(\d{{1,4}})\]', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\bSeason{SEP}(\d{{1,2}}){SEP}Episode{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\bSeason{SEP}(\d{{1,2}}){SEP}Ep{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\[S{SEP}(\d{{1,2}})\]{SEP}\[E{SEP}(\d{{1,4}})\]', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\bE{SEP}(\d{{1,4}}){SEP}S{SEP}(\d{{1,2}})\b', re.IGNORECASE), (2, 1)),
+    (re.compile(rf'\bE{SEP}(\d{{1,4}})(?=[\s\.\-_)\'\]]+|$)(?![\dp])', re.IGNORECASE), (None, 1)),
+    (re.compile(rf'\[E{SEP}(\d{{1,4}})\]', re.IGNORECASE), (None, 1)),
+    (re.compile(rf'\bEpisode{SEP}(\d{{1,4}})(?=[\s\.\-_)\]]+|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(rf'\bEp{SEP}(\d{{1,4}})(?=[\s\.\-_)\]]+|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'\[(\d{2,3})\](?!p|fps|i)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'\bS(\d{1,2})[\.\-_]?E(\d{1,4})\b', re.IGNORECASE), (1, 2)), 
+    (re.compile(r'\bS(\d{1,2})\s+E(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\bSeason[\s\-_.]*(\d{1,2})[\s\-_.]*E[\s\-_.]*(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\bS(\d{1,2})\.(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\bS(\d{1,2})\-(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\b(\d{1,2})\.(\d{1,4})\b(?!p|fps)', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\b(\d{1,2})\-(\d{1,4})\b(?!p|fps)', re.IGNORECASE), (1, 2)),
+    (re.compile(r'(?:^|[\s\-_.(\[])E(\d{2,5})(?=[\s\-_.)\]]|$)(?!p|fps)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.(\[])Episode[\s\-_.]*(\d{1,4})(?=[\s\-_.)\]]|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.(\[])Ep[\s\-_.]*(\d{1,4})(?=[\s\-_.)\]]|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.])(\d{2,4})(?=[\s\-_.]|$)(?!p|fps|\d)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'\[(\d{2,4})\](?!p|fps)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'^S(\d{2})E(\d{2,4})$', re.IGNORECASE), (1, 2)),
+    (re.compile(r'^S(\d{2})\s*-\s*E(\d{2,4})$', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\[[\s]*(\d{2,4})[\s]*\](?!p|i|fps)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.(\[])\s*(\d{2,4})\s*(?=[\s\-_.)\]])', re.IGNORECASE), (None, 1))
+]
+
+def extract_file_info(filename, fallback_index=0):
+    season = "1"
+    episode = str(fallback_index)
+    
+    for pattern, (s_idx, e_idx) in SEASON_EPISODE_PATTERNS:
+        match = pattern.search(filename)
+        if match:
+            if s_idx is not None:
+                try: season = str(int(match.group(s_idx)))
+                except: pass
+            if e_idx is not None:
+                try: episode = str(int(match.group(e_idx)))
+                except: pass
+            break
+
+    lower_name = filename.lower()
+    qual = "Normal"
+    if re.search(r'\b(2160p|4k)\b', lower_name): qual = "4K"
+    elif re.search(r'\b1080p\b', lower_name): qual = "1080p"
+    elif re.search(r'\b720p\b', lower_name): qual = "720p"
+    elif re.search(r'\b480p\b', lower_name): qual = "480p"
+    
+    clean_title = re.sub(r'\.(mkv|mp4|avi|mpe?g)$', '', filename, flags=re.IGNORECASE)
+    clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', clean_title)
+    
+    for pattern, _ in SEASON_EPISODE_PATTERNS:
+        m = pattern.search(clean_title)
+        if m:
+            clean_title = clean_title[:m.start()]
+            break
+            
+    clean_title = clean_title.replace(".", " ").replace("_", " ")
+    tags = r'\b(mkv|mp4|avi|hd|1080p|720p|480p|4k|webrip|web-dl|amzn|x265|x264|hevc|hindi|english|dual|audio|dubbed|subbed)\b'
+    clean_title = re.sub(tags, '', clean_title, flags=re.IGNORECASE)
+    clean_title = re.sub(r'[-–—~]\s*$', '', clean_title.strip()).strip()
+    clean_title = " ".join(clean_title.split())
+    if not clean_title: clean_title = "Unknown"
+    
+    return clean_title.title(), season, episode, qual
 
 # ==========================================
 # ADMIN INDEX PANEL COMMANDS & CALLBACKS
@@ -23,27 +99,33 @@ ADD_CHANNEL_CONVERSATION = {}
 
 @Client.on_message(filters.command("index") & filters.user(ADMINS))
 async def index_admin_panel(bot: Client, message):
+    await send_index_panel(message)
+
+async def send_index_panel(message):
+    # 🧠 LIVE DATABASE COUNTING
+    anime_count = await Media.collection.count_documents({"category": "anime"}) + await Media2.collection.count_documents({"category": "anime"})
+    manga_count = await Media.collection.count_documents({"category": "manga"}) + await Media2.collection.count_documents({"category": "manga"})
+    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add Chnl", callback_data="idx_add_chnl")],
-        [InlineKeyboardButton("New Index Chnl", callback_data="idx_new_chnl"), 
-         InlineKeyboardButton("Reindex All", callback_data="idx_reindex_all")],
-        [InlineKeyboardButton("Refresh", callback_data="idx_refresh"),
-         InlineKeyboardButton("Close", callback_data="idx_close")]
+        [InlineKeyboardButton("Index Chnls", callback_data="idx_list_chnls"), 
+         InlineKeyboardButton("Indexlist", callback_data="idx_list_anime")],
+        [InlineKeyboardButton("Reindex All", callback_data="idx_reindex_all"),
+         InlineKeyboardButton("Refresh", callback_data="idx_refresh")],
+        [InlineKeyboardButton("Close", callback_data="idx_close")]
     ])
-    
-    # Yahan tum get_db_stats() jaisa function apne database se bula sakte ho
-    total_anime_files = 0  # Replace with DB count
-    total_manga_files = 0  # Replace with DB count
     
     text = (
         "**⚙️ Admin Index Management Panel**\n\n"
-        f"🎬 **Anime Database:** {total_anime_files} Files\n"
-        f"📚 **Manga Database:** {total_manga_files} Files\n\n"
+        f"🎬 **Anime Database:** {anime_count} Files\n"
+        f"📚 **Manga Database:** {manga_count} Files\n\n"
         "Select an option below to manage your indexed channels."
     )
     
-    await message.reply_text(text, reply_markup=keyboard)
-
+    if isinstance(message, CallbackQuery):
+        await message.message.edit_text(text, reply_markup=keyboard)
+    else:
+        await message.reply_text(text, reply_markup=keyboard)
 
 @Client.on_callback_query(filters.regex(r'^idx_') & filters.user(ADMINS))
 async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
@@ -56,33 +138,61 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
              InlineKeyboardButton("📚 Manga", callback_data="idx_category_manga")],
             [InlineKeyboardButton("🔙 Back", callback_data="idx_back")]
         ])
-        await query.edit_message_text("Select the category for the new channel:", reply_markup=keyboard)
+        await query.message.edit_text("Select the category for the new channel:", reply_markup=keyboard)
 
     elif data.startswith("idx_category_"):
-        category = data.split("_")[2] # 'anime' or 'manga'
+        category = data.split("_")[2]
         ADD_CHANNEL_CONVERSATION[user_id] = {"category": category}
         
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back", callback_data="idx_add_chnl"),
              InlineKeyboardButton("Close", callback_data="idx_close")]
         ])
-        await query.edit_message_text(
+        await query.message.edit_text(
             f"**Step 2: Add {category.capitalize()} Channel**\n\n"
             f"1. Make sure I am an admin in the channel.\n"
             f"2. Forward any recent file/post from the channel here to start indexing.",
             reply_markup=keyboard
         )
 
+    elif data == "idx_list_chnls":
+        await query.answer("Fetching Channels...", show_alert=False)
+        chat_ids = await Media.collection.distinct("chat_id")
+        
+        text = "**📡 Indexed Channels (Chat IDs):**\n\n"
+        if not chat_ids:
+            text += "No channels found or chat_id not saved in DB."
+        else:
+            for cid in chat_ids:
+                if cid: text += f"▪️ `{cid}`\n"
+                
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="idx_back")]])
+        await query.message.edit_text(text, reply_markup=keyboard)
+
+    elif data == "idx_list_anime":
+        await query.answer("Fetching Anime List...", show_alert=False)
+        anime_titles = await Media.collection.distinct("clean_title", {"category": "anime"})
+        
+        text = "**🗂️ Indexed Anime Titles:**\n\n"
+        if not anime_titles:
+            text += "No anime found in DB."
+        else:
+            for title in sorted(anime_titles)[:80]: # Showing first 80 to prevent TG message length limit
+                if title: text += f"▪️ `{title}`\n"
+            if len(anime_titles) > 80:
+                text += f"\n*...and {len(anime_titles) - 80} more.*"
+                
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="idx_back")]])
+        await query.message.edit_text(text, reply_markup=keyboard)
+
     elif data == "idx_back":
         if user_id in ADD_CHANNEL_CONVERSATION:
             del ADD_CHANNEL_CONVERSATION[user_id]
-        await index_admin_panel(bot, query.message)
-        await query.message.delete()
+        await send_index_panel(query)
 
     elif data == "idx_refresh":
-        await query.answer("Refreshed Status", show_alert=False)
-        # Update text with fresh counts from DB here
-        pass 
+        await send_index_panel(query)
+        await query.answer("Panel Refreshed!", show_alert=False)
 
     elif data == "idx_close":
         if user_id in ADD_CHANNEL_CONVERSATION:
@@ -95,12 +205,11 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
 
 @Client.on_message((filters.forwarded | (filters.regex(r"(https://)?(t\.me/|telegram\.me/|telegram\.dog/)(c/)?(\d+|[a-zA-Z_0-9]+)/(\d+)$")) & filters.text ) & filters.private & filters.incoming)
 async def send_for_index(bot, message):
-    # Detect if admin is in the middle of adding a specific category channel
     user_id = message.from_user.id
-    category = "anime" # Default
+    category = "anime" 
     if user_id in ADD_CHANNEL_CONVERSATION:
         category = ADD_CHANNEL_CONVERSATION[user_id]["category"]
-        del ADD_CHANNEL_CONVERSATION[user_id] # Clear state after receiving forward
+        del ADD_CHANNEL_CONVERSATION[user_id]
 
     if message.text:
         regex = re.compile(r"(https://)?(t\.me/|telegram\.me/|telegram\.dog/)(c/)?(\d+|[a-zA-Z_0-9]+)/(\d+)$")
@@ -118,24 +227,11 @@ async def send_for_index(bot, message):
         return
 
     try:
-        await bot.get_chat(chat_id)
-    except ChannelInvalid:
-        return await message.reply('This may be a private channel / group. Make me an admin over there to index the files.')
-    except (UsernameInvalid, UsernameNotModified):
-        return await message.reply('Invalid Link specified.')
-    except Exception as e:
-        logger.exception(e)
-        return await message.reply(f'Errors - {e}')
-
-    try:
         k = await bot.get_messages(chat_id, last_msg_id)
     except:
         return await message.reply('Make Sure That I am An Admin In The Channel, if channel is private')
-    if k.empty:
-        return await message.reply('This may be group and I am not an admin of the group.')
 
     if user_id in ADMINS:
-        # Added category to the callback data
         buttons = [
             [InlineKeyboardButton('Yes, Start Indexing', callback_data=f'index#accept#{chat_id}#{last_msg_id}#{user_id}#{category}')],
             [InlineKeyboardButton('Close', callback_data='idx_close')]
@@ -144,29 +240,8 @@ async def send_for_index(bot, message):
         return await message.reply(
             f'**Category:** {category.capitalize()}\n\n'
             f'Do you Want To Index This Channel?\n\n'
-            f'Chat ID/ Username: <code>{chat_id}</code>\nLast Message ID: <code>{last_msg_id}</code>\n\n'
-            f'Need setskip? 👉🏻 /setskip',
+            f'Chat ID/ Username: <code>{chat_id}</code>\nLast Message ID: <code>{last_msg_id}</code>',
             reply_markup=reply_markup)
-
-    # For normal users requesting index
-    if type(chat_id) is int:
-        try:
-            link = (await bot.create_chat_invite_link(chat_id)).invite_link
-        except ChatAdminRequired:
-            return await message.reply('Make sure I am an admin in the chat and have permission to invite users.')
-    else:
-        link = f"@{message.forward_from_chat.username}"
-        
-    buttons = [
-        [InlineKeyboardButton('Accept Index', callback_data=f'index#accept#{chat_id}#{last_msg_id}#{user_id}#anime')],
-        [InlineKeyboardButton('Reject Index', callback_data=f'index#reject#{chat_id}#{message.id}#{user_id}#anime')]
-    ]
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await bot.send_message(LOG_CHANNEL,
-                           f'#IndexRequest\n\nBy : {message.from_user.mention} (<code>{message.from_user.id}</code>)\nChat ID/ Username - <code> {chat_id}</code>\nLast Message ID - <code>{last_msg_id}</code>\nInviteLink - {link}',
-                           reply_markup=reply_markup)
-    await message.reply('Thank You For the Contribution, Wait For My Moderators to verify the files.')
-
 
 # ==========================================
 # INDEXING PROCESS CALLBACK
@@ -178,61 +253,32 @@ async def index_files_callback(bot, query):
         temp.CANCEL = True
         return await query.answer("Cancelling Indexing")
         
-    # Unpack the new data format which includes category
     parts = query.data.split("#")
     if len(parts) == 6:
         _, action, chat, lst_msg_id, from_user, category = parts
     else:
-        # Fallback for old buttons
         _, action, chat, lst_msg_id, from_user = parts
         category = "anime"
 
     if action == 'reject':
-        await query.message.delete()
-        await bot.send_message(int(from_user),
-                               f'Your Submission for indexing {chat} has been declined by our moderators.',
-                               reply_to_message_id=int(lst_msg_id))
-        return
+        return await query.message.delete()
 
     if lock.locked():
         return await query.answer('Wait until previous process complete.', show_alert=True)
     msg = query.message
 
     await query.answer('Processing...⏳', show_alert=True)
-    if int(from_user) not in ADMINS:
-        await bot.send_message(int(from_user),
-                               f'Your Submission for indexing {chat} has been accepted by our moderators and will be added soon.',
-                               reply_to_message_id=int(lst_msg_id))
     await msg.edit(
         f"Starting Indexing for Category: **{category.capitalize()}**",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton('Cancel', callback_data='index_cancel')]]
-        )
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='index_cancel')]])
     )
-    try:
-        chat = int(chat)
-    except:
-        chat = chat
+    try: chat = int(chat)
+    except: chat = chat
         
     await index_files_to_db(int(lst_msg_id), chat, msg, bot, category)
 
-
-@Client.on_message(filters.command('setskip') & filters.user(ADMINS))
-async def set_skip_number(bot, message):
-    if ' ' in message.text:
-        _, skip = message.text.split(" ")
-        try:
-            skip = int(skip)
-        except:
-            return await message.reply("Skip number should be an integer.")
-        await message.reply(f"Successfully set SKIP number as {skip}")
-        temp.CURRENT = int(skip)
-    else:
-        await message.reply("Give me a skip number")
-
-
 # ==========================================
-# THE INDEXING ENGINE
+# THE INDEXING ENGINE (WITH AI PARSING)
 # ==========================================
 
 async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
@@ -248,15 +294,13 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
             temp.CANCEL = False
             async for message in bot.iter_messages(chat, lst_msg_id, temp.CURRENT):
                 if temp.CANCEL:
-                    await msg.edit(f"Successfully Cancelled!!\n\nSaved <code>{total_files}</code> files to {category.capitalize()} dataBase!\nDuplicate Files Skipped: <code>{duplicate}</code>\nDeleted Messages Skipped: <code>{deleted}</code>\nNon-Media messages skipped: <code>{no_media + unsupported}</code>(Unsupported Media - `{unsupported}` )\nErrors Occurred: <code>{errors}</code>")
                     break
                 current += 1
                 if current % 80 == 0:
                     can = [[InlineKeyboardButton('Cancel', callback_data='index_cancel')]]
-                    reply = InlineKeyboardMarkup(can)
                     await msg.edit_text(
-                        text=f"**Category:** {category.capitalize()}\nTotal messages fetched: <code>{current}</code>\nTotal messages saved: <code>{total_files}</code>\nDuplicate Files Skipped: <code>{duplicate}</code>\nDeleted Messages Skipped: <code>{deleted}</code>\nNon-Media messages skipped: <code>{no_media + unsupported}</code>(Unsupported Media - `{unsupported}` )\nErrors Occurred: <code>{errors}</code>",
-                        reply_markup=reply)
+                        text=f"**Category:** {category.capitalize()}\nTotal messages fetched: <code>{current}</code>\nTotal messages saved: <code>{total_files}</code>\nDuplicate Files Skipped: <code>{duplicate}</code>",
+                        reply_markup=InlineKeyboardMarkup(can))
                 if message.empty:
                     deleted += 1
                     continue
@@ -271,11 +315,20 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                     unsupported += 1
                     continue
                 
-                # Attaching the target category (anime/manga) to the media object 
-                # so save_file() inside ia_filterdb.py can sort it.
+                # 🔥 THE MAGIC HAPPENS HERE: Parse data BEFORE saving to DB
+                filename = getattr(media, 'file_name', 'Unknown')
+                title, season, episode, quality = extract_file_info(filename, current)
+                
                 media.file_type = message.media.value
                 media.category = category 
                 media.caption = message.caption
+                media.chat_id = chat
+                
+                # Attaching clean extracted data to the media object
+                media.clean_title = title
+                media.season = season
+                media.episode = episode
+                media.quality = quality
                 
                 aynav, vnay = await save_file(bot, media)
                 if aynav:
@@ -288,4 +341,5 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
             logger.exception(e)
             await msg.edit(f'Error: {e}')
         else:
-            await msg.edit(f'Successfully saved <code>{total_files}</code> to {category.capitalize()} dataBase!\nDuplicate Files Skipped: <code>{duplicate}</code>\nDeleted Messages Skipped: <code>{deleted}</code>\nNon-Media messages skipped: <code>{no_media + unsupported}</code>(Unsupported Media - `{unsupported}` )\nErrors Occurred: <code>{errors}</code>')
+            await msg.edit(f'Successfully saved <code>{total_files}</code> to {category.capitalize()} dataBase!\nDuplicate Files Skipped: <code>{duplicate}</code>\nDeleted Messages Skipped: <code>{deleted}</code>')
+
