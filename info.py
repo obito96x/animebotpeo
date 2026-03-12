@@ -20,7 +20,7 @@ def is_enabled(value, default):
 SESSION = environ.get('SESSION', 'Media_search')
 API_ID = int(environ.get('API_ID', '21352768'))
 API_HASH = environ.get('API_HASH', '5fecf44f5dd9f46410d6d835491ae4a3')
-BOT_TOKEN = environ.get('BOT_TOKEN', "8047158900:AAElwDaX8m-V7Vq6MeJqKx1O1UunnKCFJ10")
+BOT_TOKEN = environ.get('BOT_TOKEN', "8047158900:AAF7cFUjTwJyXIp6kS7Ij02Agic3nH0W36Y")
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 
 # ============================
