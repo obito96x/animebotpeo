@@ -29,8 +29,9 @@ client2 = AsyncIOMotorClient(DATABASE_URI2)
 db2 = client2[DATABASE_NAME]
 instance2 = Instance.from_db(db2)
 
-
-# Primary DB Model
+# ==========================================
+# 🗄️ UPDATED PRIMARY DB MODEL (WITH PRO FIELDS)
+# ==========================================
 @instance.register
 class Media(Document):
     file_id = fields.StrField(attribute='_id')
@@ -40,13 +41,23 @@ class Media(Document):
     file_type = fields.StrField(allow_none=True)
     mime_type = fields.StrField(allow_none=True)
     caption = fields.StrField(allow_none=True)
-    # NEW FIELD: Category to separate Anime and Manga
+    
     category = fields.StrField(default="anime", allow_none=True)
+    
+    # 🔥 ULTRA-PRO FIELDS ADDED HERE
+    clean_title = fields.StrField(default="", allow_none=True)
+    season = fields.StrField(default="1", allow_none=True)
+    episode = fields.StrField(default="0", allow_none=True)
+    quality = fields.StrField(default="Normal", allow_none=True)
+    chat_id = fields.IntField(default=0, allow_none=True)
 
     class Meta:
         indexes = ('$file_name', )
         collection_name = COLLECTION_NAME
 
+# ==========================================
+# 🗄️ UPDATED SECONDARY DB MODEL
+# ==========================================
 @instance2.register
 class Media2(Document):
     file_id = fields.StrField(attribute='_id')
@@ -56,8 +67,15 @@ class Media2(Document):
     file_type = fields.StrField(allow_none=True)
     mime_type = fields.StrField(allow_none=True)
     caption = fields.StrField(allow_none=True)
-    # NEW FIELD: Category to separate Anime and Manga
+    
     category = fields.StrField(default="anime", allow_none=True)
+    
+    # 🔥 ULTRA-PRO FIELDS ADDED HERE
+    clean_title = fields.StrField(default="", allow_none=True)
+    season = fields.StrField(default="1", allow_none=True)
+    episode = fields.StrField(default="0", allow_none=True)
+    quality = fields.StrField(default="Normal", allow_none=True)
+    chat_id = fields.IntField(default=0, allow_none=True)
 
     class Meta:
         indexes = ('$file_name', )
@@ -73,20 +91,33 @@ async def choose_mediaDB():
         logger.info("Using second db (Media2)")
         saveMedia = Media2
 
+# ==========================================
+# 💾 UPDATED SAVE_FILE (PUSHING PRO DATA)
+# ==========================================
 async def save_file(bot, media):
     """Save file in database"""
     global saveMedia
     file_id, file_ref = unpack_new_file_id(media.file_id)
     file_name = re.sub(r"(_|\-|\.|\+)", " ", str(media.file_name))
     
-    # Fetch category dynamically, default to anime
+    # Fetch all custom fields passed from index.py
     category = getattr(media, 'category', 'anime')
+    clean_title = getattr(media, 'clean_title', '')
+    season = getattr(media, 'season', '1')
+    episode = getattr(media, 'episode', '0')
+    quality = getattr(media, 'quality', 'Normal')
+    
+    # Safe chat_id integer conversion
+    try: chat_id = int(getattr(media, 'chat_id', 0))
+    except: chat_id = 0
 
     try:
         if saveMedia == Media2: 
             if await Media.count_documents({'file_id': file_id}, limit=1):
                 logger.warning(f'{file_name} is already saved in primary database!')
                 return False, 0
+                
+        # Push ALL details to MongoDB
         file = saveMedia(
             file_id=file_id,
             file_ref=file_ref,
@@ -95,7 +126,12 @@ async def save_file(bot, media):
             file_type=media.file_type,
             mime_type=media.mime_type,
             caption=media.caption.html if media.caption else None,
-            category=category # Category saved here!
+            category=category,
+            clean_title=clean_title,
+            season=season,
+            episode=episode,
+            quality=quality,
+            chat_id=chat_id
         )
     except ValidationError:
         logger.exception('Error occurred while saving file in database')
@@ -112,23 +148,21 @@ async def save_file(bot, media):
                 await send_msg(bot, file.file_name, file.caption)
             return True, 1
 
-# Added 'category' parameter to filter results
+# ==========================================
+# 🔍 SEARCH ENGINE (STAYS FAST)
+# ==========================================
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False, category=None):
     """For given query return (results, next_offset)"""
     if chat_id is not None:
         settings = await get_settings(int(chat_id))
         try:
-            if settings['max_btn']:
-                max_results = 10
-            else:
-                max_results = int(MAX_B_TN)
+            if settings['max_btn']: max_results = 10
+            else: max_results = int(MAX_B_TN)
         except KeyError:
             await save_group_settings(int(chat_id), 'max_btn', False)
             settings = await get_settings(int(chat_id))
-            if settings['max_btn']:
-                max_results = 10
-            else:
-                max_results = int(MAX_B_TN)
+            if settings['max_btn']: max_results = 10
+            else: max_results = int(MAX_B_TN)
     
     query = query.strip()
     if not query:
@@ -151,15 +185,13 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     if file_type:
         search_filter['file_type'] = file_type
         
-    # Apply category filter if requested
+    # Appending Category Filter!
     if category:
         search_filter['category'] = category
 
     total_results = ((await Media.count_documents(search_filter))+(await Media2.count_documents(search_filter)))
 
-    #verifies max_results is an even number or not
     if max_results%2 != 0: 
-        logger.info(f"Since max_results is an odd number ({max_results}), bot will use {max_results+1} as max_results to make it even.")
         max_results += 1
 
     cursor = Media.find(search_filter)
@@ -185,32 +217,20 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
         next_offset = ''
     return files, next_offset, total_results
 
-
 async def get_bad_files(query, file_type=None, filter=False, category=None):
-    """For given query return (results, next_offset)"""
     query = query.strip()
-    if not query:
-        raw_pattern = '.'
-    elif ' ' not in query:
-        raw_pattern = r'(\b|[\.\+\-_])' + query + r'(\b|[\.\+\-_])'
-    else:
-        raw_pattern = query.replace(' ', r'.*[\s\.\+\-_()]')
+    if not query: raw_pattern = '.'
+    elif ' ' not in query: raw_pattern = r'(\b|[\.\+\-_])' + query + r'(\b|[\.\+\-_])'
+    else: raw_pattern = query.replace(' ', r'.*[\s\.\+\-_()]')
     
-    try:
-        regex = re.compile(raw_pattern, flags=re.IGNORECASE)
-    except:
-        return []
+    try: regex = re.compile(raw_pattern, flags=re.IGNORECASE)
+    except: return []
 
-    if USE_CAPTION_FILTER:
-        search_filter = {'$or': [{'file_name': regex}, {'caption': regex}]}
-    else:
-        search_filter = {'file_name': regex}
+    if USE_CAPTION_FILTER: search_filter = {'$or': [{'file_name': regex}, {'caption': regex}]}
+    else: search_filter = {'file_name': regex}
 
-    if file_type:
-        search_filter['file_type'] = file_type
-        
-    if category:
-        search_filter['category'] = category
+    if file_type: search_filter['file_type'] = file_type
+    if category: search_filter['category'] = category
 
     cursor = Media.find(search_filter)
     cursor2 = Media2.find(search_filter)
@@ -219,7 +239,6 @@ async def get_bad_files(query, file_type=None, filter=False, category=None):
     cursor2.sort('$natural', -1)
 
     files = ((await cursor2.to_list(length=(await Media2.count_documents(search_filter))))+(await cursor.to_list(length=(await Media.count_documents(search_filter)))))
-
     total_results = len(files)
 
     return files, total_results
@@ -233,21 +252,16 @@ async def get_file_details(query):
         filedetails = await cursor2.to_list(length=1)
     return filedetails
 
-
 def encode_file_id(s: bytes) -> str:
     r = b""
     n = 0
-
     for i in s + bytes([22]) + bytes([4]):
-        if i == 0:
-            n += 1
+        if i == 0: n += 1
         else:
             if n:
                 r += b"\x00" + bytes([n])
                 n = 0
-
             r += bytes([i])
-
     return base64.urlsafe_b64encode(r).decode().rstrip("=")
 
 def encode_file_ref(file_ref: bytes) -> str:
@@ -256,18 +270,9 @@ def encode_file_ref(file_ref: bytes) -> str:
 def unpack_new_file_id(new_file_id):
     """Return file_id, file_ref"""
     decoded = FileId.decode(new_file_id)
-    file_id = encode_file_id(
-        pack(
-            "<iiqq",
-            int(decoded.file_type),
-            decoded.dc_id,
-            decoded.media_id,
-            decoded.access_hash
-        )
-    )
+    file_id = encode_file_id(pack("<iiqq", int(decoded.file_type), decoded.dc_id, decoded.media_id, decoded.access_hash))
     file_ref = encode_file_ref(decoded.file_reference)
     return file_id, file_ref
-
 
 async def send_msg(bot, filename, caption): 
     try:
@@ -325,7 +330,7 @@ async def get_qualities(text, qualities: list):
     """Get all Quality from text"""
     quality = []
     for q in qualities:
-        if q in text:
-            quality.append(q)
+        if q in text: quality.append(q)
     quality = ", ".join(quality)
     return quality[:-2] if quality.endswith(", ") else quality
+    
