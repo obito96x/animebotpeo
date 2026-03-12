@@ -7,7 +7,7 @@ import string
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
+from database.watchlist_db import get_watchlist
 from database.ia_filterdb import Media, Media2
 from database.users_chats_db import db
 from plugins.pmfilter import auto_filter 
@@ -23,6 +23,8 @@ except ImportError:
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
+
+HELP_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 
 # 🔴 FIX: Tumhara username direct yahan daal diya hai taaki error na aaye!
 OWNER_USERNAME = "i_killed_my_clan"
@@ -189,4 +191,149 @@ async def search_anime_cmd(client, message):
         await auto_filter(client, message)
     except Exception as e:
         await message.reply_text(f"<b>❌ Error:</b> {e}")
+
+@Client.on_message(filters.command("help"))
+async def help_cmd(client, message):
+    text = (
+        "**🤖 Bot Commands List:**\n\n"
+        "➤ `/search <name>` — Find Anime or Manga\n"
+        "➤ `/ongoing` — See currently airing Anime\n"
+        "➤ `/ongoing_manga` — See currently releasing Manga\n"
+        "➤ `/watchlist` — View your saved Anime\n"
+        "➤ `/library` — View your saved Manga/Manhwa\n"
+        "➤ `/todayschedule` — View today's anime release schedule\n"
+        "➤ `/request <name>` — Request an anime/manga to be added\n"
+    )
+    btn = [[InlineKeyboardButton("❌ Close", callback_data="close_data")]]
+    await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=InlineKeyboardMarkup(btn))
+
+@Client.on_message(filters.command("request") & filters.private)
+async def request_cmd(client, message):
+    if len(message.command) < 2:
+        return await message.reply("⚠️ **Usage:** `/request <Anime/Manga Name>`\n\nExample: `/request Solo Leveling`")
+    
+    req_name = message.text.split(" ", 1)[1]
+    user = message.from_user
+    
+    text = f"**🆕 New Request:**\n\n**Name:** `{req_name}`\n**Requested By:** {user.mention} (`{user.id}`)"
+    
+    # Send request to Admin Log Channel
+    if INDEX_REQ_CHANNEL:
+        await client.send_message(INDEX_REQ_CHANNEL, text)
+    await message.reply(f"✅ Your request for **{req_name}** has been sent to the admins!")
+
+
+# ==========================================
+# ⭐ WATCHLIST & LIBRARY (SEPARATE LISTS)
+# ==========================================
+@Client.on_message(filters.command("watchlist"))
+async def watchlist_cmd(client, message):
+    user_id = message.from_user.id
+    # Fetch ONLY 'anime' category
+    saved_anime = await get_watchlist(user_id, "anime")
+    
+    if not saved_anime:
+        return await message.reply("🥺 **Your Anime Watchlist is empty!**\nSearch for anime and click **⭐ ADD TO WATCHLIST** to save them.")
+        
+    text = "**📺 Your Saved Anime Watchlist:**\n\n"
+    for item in saved_anime:
+        title = item['title']
+        text += f"▪️ **{title}**\n↳ 🔎 `/search {title}`\n\n"
+        
+    btn = [[InlineKeyboardButton("❌ Close", callback_data="close_data")]]
+    await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=InlineKeyboardMarkup(btn))
+
+@Client.on_message(filters.command(["library", "readlist"]))
+async def library_cmd(client, message):
+    user_id = message.from_user.id
+    # Fetch ONLY 'manga' category
+    saved_manga = await get_watchlist(user_id, "manga")
+    
+    if not saved_manga:
+        return await message.reply("🥺 **Your Manga Library is empty!**\nSearch for manga and click **📁 ADD TO LIBRARY** to save them.")
+        
+    text = "**📚 Your Saved Manga & Manhwa:**\n\n"
+    for item in saved_manga:
+        title = item['title']
+        text += f"▪️ **{title}**\n↳ 🔎 `/search {title}`\n\n"
+        
+    btn = [[InlineKeyboardButton("❌ Close", callback_data="close_data")]]
+    await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=InlineKeyboardMarkup(btn))
+
+
+# ==========================================
+# 🌐 ANILIST LIVE DATA (ONGOING / SCHEDULE)
+# ==========================================
+async def fetch_anilist_data(query, variables):
+    url = 'https://graphql.anilist.co'
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={'query': query, 'variables': variables}) as resp:
+                return await resp.json()
+    except Exception as e:
+        return None
+
+@Client.on_message(filters.command("ongoing"))
+async def ongoing_anime_cmd(client, message):
+    msg = await message.reply("🔄 Fetching live ongoing anime...")
+    query = '''
+    query { Page(page: 1, perPage: 15) { media(status: RELEASING, type: ANIME, sort: POPULARITY_DESC) { title { romaji } episodes } } }
+    '''
+    data = await fetch_anilist_data(query, {})
+    if not data or 'data' not in data:
+        return await msg.edit_text("❌ Failed to fetch data from Anilist.")
+        
+    anime_list = data['data']['Page']['media']
+    text = "**🔥 Top 15 Ongoing Anime:**\n\n"
+    for anime in anime_list:
+        title = anime['title']['romaji']
+        eps = anime.get('episodes') or "?"
+        text += f"📺 **{title}** (Eps: {eps})\n"
+        
+    await msg.edit_text(text)
+
+@Client.on_message(filters.command("ongoing_manga"))
+async def ongoing_manga_cmd(client, message):
+    msg = await message.reply("🔄 Fetching live ongoing manga...")
+    query = '''
+    query { Page(page: 1, perPage: 15) { media(status: RELEASING, type: MANGA, sort: POPULARITY_DESC) { title { romaji } chapters } } }
+    '''
+    data = await fetch_anilist_data(query, {})
+    if not data or 'data' not in data:
+        return await msg.edit_text("❌ Failed to fetch data from Anilist.")
+        
+    manga_list = data['data']['Page']['media']
+    text = "**🔥 Top 15 Ongoing Manga/Manhwa:**\n\n"
+    for manga in manga_list:
+        title = manga['title']['romaji']
+        chaps = manga.get('chapters') or "?"
+        text += f"📚 **{title}** (Ch: {chaps})\n"
+        
+    await msg.edit_text(text)
+
+@Client.on_message(filters.command("todayschedule"))
+async def todayschedule_cmd(client, message):
+    msg = await message.reply("🔄 Fetching today's anime schedule...")
+    import time
+    current_time = int(time.time())
+    query = '''
+    query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { romaji } } } } }
+    '''
+    variables = {"start": current_time, "end": current_time + 86400} # Next 24 hours
+    data = await fetch_anilist_data(query, variables)
+    
+    if not data or 'data' not in data:
+        return await msg.edit_text("❌ Failed to fetch schedule from Anilist.")
+        
+    schedule_list = data['data']['Page']['airingSchedules']
+    if not schedule_list:
+        return await msg.edit_text("❌ No major anime releasing today.")
+        
+    text = "**📅 Today's Anime Schedule:**\n\n"
+    for item in schedule_list:
+        title = item['media']['title']['romaji']
+        ep = item['episode']
+        text += f"⏰ **{title}** - Episode {ep}\n"
+        
+    await msg.edit_text(text)
         
