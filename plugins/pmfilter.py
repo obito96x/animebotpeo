@@ -17,27 +17,87 @@ except ImportError:
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
 
-# In-Memory Cache
 if not hasattr(temp, 'SEARCHES'): temp.SEARCHES = {}
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
-# Default 16:9 Search Banner (Change URL if you want your own custom banner)
 SEARCH_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 
 # ==========================================
-# 🧹 AI FILE CLEANER
+# 🧠 ADVANCED REGEX FILE PARSER
 # ==========================================
-def get_clean_name(filename):
-    clean = re.sub(r'\[.*?\]|\(.*?\)', '', filename)
-    clean = re.sub(r'\.(mkv|mp4|avi|mpe?g)$', '', clean, flags=re.IGNORECASE)
-    clean = re.split(r'\s-\s|\sEp\s|\sE\d', clean)[0]
-    return clean.replace(".", " ").replace("_", " ").strip()
+SEP = r'[\s\.\-_]*'
+SEASON_EPISODE_PATTERNS = [
+    (re.compile(rf'\bS{SEP}(\d{{1,2}}){SEP}E{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\[S{SEP}(\d{{1,2}}){SEP}E{SEP}(\d{{1,4}})\]', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\b(\d{{1,2}}){SEP}[xX]{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\[(\d{{1,2}}){SEP}[xX]{SEP}(\d{{1,4}})\]', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\bSeason{SEP}(\d{{1,2}}){SEP}Episode{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\bSeason{SEP}(\d{{1,2}}){SEP}Ep{SEP}(\d{{1,4}})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\[S{SEP}(\d{{1,2}})\]{SEP}\[E{SEP}(\d{{1,4}})\]', re.IGNORECASE), (1, 2)),
+    (re.compile(rf'\bE{SEP}(\d{{1,4}}){SEP}S{SEP}(\d{{1,2}})\b', re.IGNORECASE), (2, 1)),
+    (re.compile(rf'\bE{SEP}(\d{{1,4}})(?=[\s\.\-_)\'\]]+|$)(?![\dp])', re.IGNORECASE), (None, 1)),
+    (re.compile(rf'\[E{SEP}(\d{{1,4}})\]', re.IGNORECASE), (None, 1)),
+    (re.compile(rf'\bEpisode{SEP}(\d{{1,4}})(?=[\s\.\-_)\]]+|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(rf'\bEp{SEP}(\d{{1,4}})(?=[\s\.\-_)\]]+|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'\[(\d{2,3})\](?!p|fps|i)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'\bS(\d{1,2})[\.\-_]?E(\d{1,4})\b', re.IGNORECASE), (1, 2)), 
+    (re.compile(r'\bS(\d{1,2})\s+E(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\bSeason[\s\-_.]*(\d{1,2})[\s\-_.]*E[\s\-_.]*(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\bS(\d{1,2})\.(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\bS(\d{1,2})\-(\d{1,4})\b', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\b(\d{1,2})\.(\d{1,4})\b(?!p|fps)', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\b(\d{1,2})\-(\d{1,4})\b(?!p|fps)', re.IGNORECASE), (1, 2)),
+    (re.compile(r'(?:^|[\s\-_.(\[])E(\d{2,5})(?=[\s\-_.)\]]|$)(?!p|fps)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.(\[])Episode[\s\-_.]*(\d{1,4})(?=[\s\-_.)\]]|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.(\[])Ep[\s\-_.]*(\d{1,4})(?=[\s\-_.)\]]|$)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.])(\d{2,4})(?=[\s\-_.]|$)(?!p|fps|\d)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'\[(\d{2,4})\](?!p|fps)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'^S(\d{2})E(\d{2,4})$', re.IGNORECASE), (1, 2)),
+    (re.compile(r'^S(\d{2})\s*-\s*E(\d{2,4})$', re.IGNORECASE), (1, 2)),
+    (re.compile(r'\[[\s]*(\d{2,4})[\s]*\](?!p|i|fps)', re.IGNORECASE), (None, 1)),
+    (re.compile(r'(?:^|[\s\-_.(\[])\s*(\d{2,4})\s*(?=[\s\-_.)\]])', re.IGNORECASE), (None, 1))
+]
 
-def extract_ep_num(filename, index):
-    match = re.search(r'(?i)(?:ep|e|episode)\s*0*(\d+)', filename)
-    if match: return match.group(1)
-    match = re.search(r'-\s*0*(\d+)', filename)
-    if match: return match.group(1)
-    return str(index)
+def extract_file_info(filename, fallback_index=0):
+    season = "1"
+    episode = str(fallback_index)
+    match_start_index = len(filename)
+    
+    for pattern, (s_idx, e_idx) in SEASON_EPISODE_PATTERNS:
+        match = pattern.search(filename)
+        if match:
+            if s_idx is not None:
+                try: season = str(int(match.group(s_idx)))
+                except: pass
+            if e_idx is not None:
+                try: episode = str(int(match.group(e_idx)))
+                except: pass
+            match_start_index = match.start()
+            break
+
+    lower_name = filename.lower()
+    qual = "Normal"
+    if re.search(r'\b(2160p|4k)\b', lower_name): qual = "4K"
+    elif re.search(r'\b1080p\b', lower_name): qual = "1080p"
+    elif re.search(r'\b720p\b', lower_name): qual = "720p"
+    elif re.search(r'\b480p\b', lower_name): qual = "480p"
+    
+    clean_title = re.sub(r'\.(mkv|mp4|avi|mpe?g)$', '', filename, flags=re.IGNORECASE)
+    clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', clean_title)
+    
+    for pattern, _ in SEASON_EPISODE_PATTERNS:
+        m = pattern.search(clean_title)
+        if m:
+            clean_title = clean_title[:m.start()]
+            break
+            
+    clean_title = clean_title.replace(".", " ").replace("_", " ")
+    tags = r'\b(mkv|mp4|avi|hd|1080p|720p|480p|4k|webrip|web-dl|amzn|x265|x264|hevc|hindi|english|dual|audio|dubbed|subbed)\b'
+    clean_title = re.sub(tags, '', clean_title, flags=re.IGNORECASE)
+    clean_title = re.sub(r'[-–—~]\s*$', '', clean_title.strip()).strip()
+    clean_title = " ".join(clean_title.split())
+    if not clean_title: clean_title = "Unknown Anime"
+    
+    return clean_title, season, episode, qual
 
 # ==========================================
 # 💬 MAIN SEARCH HANDLERS
@@ -52,12 +112,10 @@ async def group_search(client, message):
 @Client.on_message(filters.private & filters.text & filters.incoming)
 async def pm_search_handler(bot, message):
     if message.text.startswith("/") or message.text.startswith("#"): return  
-    await message.reply_text(
-        f"<b>🙋 ʜᴇʏ {message.from_user.first_name}, \n\nPlease use the `/search` command to find Anime/Manga!\n\nExample: `/search Naruto`</b>"
-    )
+    await message.reply_text(f"<b>🙋 ʜᴇʏ {message.from_user.first_name}, \n\nPlease use the `/search` command to find Anime/Manga!\n\nExample: `/search Naruto`</b>")
 
 # ==========================================
-# 🔍 STEP 1: SEARCH RESULTS UI
+# 🔍 STEP 1: SEARCH RESULTS UI (VIOLET EXACT)
 # ==========================================
 async def auto_filter(client, msg):
     search = msg.text.lower()
@@ -72,25 +130,25 @@ async def auto_filter(client, msg):
 
     key = f"{msg.chat.id}-{msg.id}"
     
-    # Group files by Clean Name
     grouped_titles = {}
-    for f in files:
-        c_name = get_clean_name(f.file_name)
-        if not c_name: c_name = "Unknown"
-        if c_name not in grouped_titles: grouped_titles[c_name] = []
-        grouped_titles[c_name].append(f)
+    for i, f in enumerate(files):
+        title, season, ep, qual = extract_file_info(f.file_name, i)
+        if title not in grouped_titles: grouped_titles[title] = []
+        ep_int = int(ep) if ep.isdigit() else 0
+        grouped_titles[title].append((f, ep_int, qual))
         
     temp.SEARCHES[key] = grouped_titles
     titles = list(grouped_titles.keys())
     
     btn = []
-    for i, title in enumerate(titles[:5]): # Show top 5 distinct titles
+    for i, title in enumerate(titles[:10]): 
         ep_count = len(grouped_titles[title])
         btn.append([InlineKeyboardButton(f"📺 {title} ({ep_count} EP)", callback_data=f"stitle#{key}#{i}")])
         
     btn.append([InlineKeyboardButton("📄 1/1", callback_data="pages")])
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
     
+    # 🎯 Violet Search Banner Format
     cap = f"🎯 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ</b>\n\n"
     cap += f"▸ <b>Qᴜᴇʀʏ:</b> /search {search_clean}\n"
     cap += f"▸ <b>Rᴇsᴜʟᴛꜱ:</b> {len(titles)} ᴀɴɪᴍᴇ\n"
@@ -101,7 +159,7 @@ async def auto_filter(client, msg):
     await msg.reply_photo(photo=SEARCH_BANNER, caption=cap, reply_markup=InlineKeyboardMarkup(btn))
 
 # ==========================================
-# 📺 STEP 2: ANIME DETAILS UI
+# 📺 STEP 2: ANIME DETAILS UI (INFO BOX)
 # ==========================================
 @Client.on_callback_query(filters.regex(r"^stitle#"))
 async def select_title_cb(client, query):
@@ -112,19 +170,19 @@ async def select_title_cb(client, query):
     
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
-    files = grouped_titles[selected_title]
+    files_data = grouped_titles[selected_title]
     
-    # Fetch Anilist Details
     anime_info = await get_anime_info(selected_title) if get_anime_info else {}
     
     cover = anime_info.get("cover_image", SEARCH_BANNER)
     rating = anime_info.get('score', 'N/A')
     atype = anime_info.get('format', 'TV Series')
     status = anime_info.get('status', 'FINISHED')
-    eps = anime_info.get('episodes', len(files))
+    eps = anime_info.get('episodes', len(files_data))
     genres = ", ".join(anime_info.get('genres', ['Action', 'Adventure']))
     synopsis = anime_info.get('description', 'No synopsis available.')[:250]
     
+    # ┌────────────────────── Box format
     cap = f"<b>{selected_title}</b>\n"
     cap += f"┌──────────────────────\n"
     cap += f"» <b>Type:</b> {atype}\n"
@@ -145,7 +203,7 @@ async def select_title_cb(client, query):
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btn))
 
 # ==========================================
-# 🔢 STEP 3: EPISODE GRID UI (1-30)
+# 🔢 STEP 3: EPISODE GRID UI (30 EPs per page)
 # ==========================================
 @Client.on_callback_query(filters.regex(r"^swatch#"))
 async def swatch_cb(client, query):
@@ -157,44 +215,42 @@ async def swatch_cb(client, query):
     
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
-    files = grouped_titles[selected_title]
-    total_eps = len(files)
+    files_data = grouped_titles[selected_title]
+    total_eps = len(files_data)
     
-    # Sort files alphabetically to ensure correct episode order
-    files = sorted(files, key=lambda x: x.file_name)
-    current_chunk = files[offset:offset+30]
+    # 🧠 PRO SORTING: Sort by integer episode number!
+    files_data.sort(key=lambda x: x[1])
+    current_chunk = files_data[offset:offset+30]
     
-    cap = f"📺 <b>{selected_title}</b>\n\n"
     end_offset = min(offset + 30, total_eps)
+    cap = f"📺 <b>{selected_title}</b>\n\n"
     cap += f"<b>Select episode ({offset+1}-{end_offset} of {total_eps}):</b>"
 
     btn = []
     row = []
-    for i, f in enumerate(current_chunk, start=offset+1):
-        ep_label = extract_ep_num(f.file_name, i)
-        row.append(InlineKeyboardButton(ep_label, callback_data=f"file#{f.file_id}"))
+    for f, ep_num, qual in current_chunk:
+        # Show exact episode number on the button
+        row.append(InlineKeyboardButton(str(ep_num), callback_data=f"file#{f.file_id}"))
         if len(row) == 5:
             btn.append(row)
             row = []
     if row: btn.append(row)
     
-    btn.append([InlineKeyboardButton("📥 DOWNLOAD ALL EPISODES", callback_data=f"downall#{key}#{index}")])
+    btn.append([InlineKeyboardButton("📥 DOWNLOAD ALL EPISODES", callback_data=f"downall#{key}#{index}#{offset}")])
     
-    # Pagination for episodes > 30
     page_row = []
     if offset > 0:
-        page_row.append(InlineKeyboardButton("⬅️", callback_data=f"swatch#{key}#{index}#{offset-30}"))
+        page_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"swatch#{key}#{index}#{offset-30}"))
     if total_eps > offset + 30:
-        page_row.append(InlineKeyboardButton("➡️", callback_data=f"swatch#{key}#{index}#{offset+30}"))
+        page_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"swatch#{key}#{index}#{offset+30}"))
     if page_row: btn.append(page_row)
         
     btn.append([InlineKeyboardButton("🔙 BACK", callback_data=f"stitle#{key}#{index}"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
     
-    # Send Grid View
     await query.message.edit_caption(caption=cap, reply_markup=InlineKeyboardMarkup(btn))
 
 # ==========================================
-# 🔙 BACK BUTTON & OTHER CALLBACKS
+# 🔙 EXTRA CALLBACKS
 # ==========================================
 @Client.on_callback_query(filters.regex(r"^sback#"))
 async def back_to_search(client, query):
@@ -204,15 +260,14 @@ async def back_to_search(client, query):
     
     titles = list(grouped_titles.keys())
     btn = []
-    for i, title in enumerate(titles[:5]):
+    for i, title in enumerate(titles[:10]):
         ep_count = len(grouped_titles[title])
         btn.append([InlineKeyboardButton(f"📺 {title} ({ep_count} EP)", callback_data=f"stitle#{key}#{i}")])
         
     btn.append([InlineKeyboardButton("📄 1/1", callback_data="pages")])
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
     
-    cap = f"🎯 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ</b>\n\n"
-    cap += f"▸ <b>Rᴇsᴜʟᴛꜱ:</b> {len(titles)} ᴀɴɪᴍᴇ\n▸ <b>Pᴀɢᴇ:</b> 1 of 1\n\n<i>ꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ ᴛᴏ ᴠɪᴇᴡ ᴅᴇᴛᴀɪʟꜱ ↓</i>"
+    cap = f"🎯 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ</b>\n\n▸ <b>Rᴇsᴜʟᴛꜱ:</b> {len(titles)} ᴀɴɪᴍᴇ\n▸ <b>Pᴀɢᴇ:</b> 1 of 1\n\n<i>ꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ ᴛᴏ ᴠɪᴇᴡ ᴅᴇᴛᴀɪʟꜱ ↓</i>"
 
     await query.message.edit_media(InputMediaPhoto(media=SEARCH_BANNER, caption=cap))
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btn))
@@ -220,26 +275,37 @@ async def back_to_search(client, query):
 @Client.on_callback_query(filters.regex(r"^file#"))
 async def single_file_cb(bot, query):
     _, file_id = query.data.split("#")
+    # Redirects to PM to get the exact file
     await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=file_{file_id}")
 
 @Client.on_callback_query(filters.regex(r"^downall#"))
 async def downall_cb(bot, query):
-    _, key, index = query.data.split("#")
+    # Extracts the chunk (max 30 episodes) from the current page
+    _, key, index, offset = query.data.split("#")
+    offset = int(offset)
     grouped_titles = temp.SEARCHES.get(key)
     if not grouped_titles: return await query.answer("Session Expired!", show_alert=True)
     
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
-    files = grouped_titles[selected_title]
+    files_data = grouped_titles[selected_title]
+    files_data.sort(key=lambda x: x[1])
+    current_chunk = files_data[offset:offset+30]
     
-    await query.answer("Sending all episodes... ⏳", show_alert=False)
-    for f in files:
+    await query.answer("Sending episodes to your PM... ⏳", show_alert=False)
+    
+    # Generate batch token or redirect to PM for all 30 files
+    bot_username = bot.me.username if bot.me else temp.U_NAME
+    # Using a loop just to trigger the files. For better security we can send direct.
+    for f, ep, qual in current_chunk:
         try:
-            await bot.send_cached_media(chat_id=query.message.chat.id, file_id=f.file_id)
+            await bot.send_cached_media(chat_id=query.from_user.id, file_id=f.file_id)
             await asyncio.sleep(0.5)
         except FloodWait as e:
             await asyncio.sleep(e.value + 1)
-            await bot.send_cached_media(chat_id=query.message.chat.id, file_id=f.file_id)
+            await bot.send_cached_media(chat_id=query.from_user.id, file_id=f.file_id)
+        except Exception:
+            pass
 
 @Client.on_callback_query(filters.regex(r"^close_data$"))
 async def close_cb(bot, query):
@@ -248,6 +314,29 @@ async def close_cb(bot, query):
 @Client.on_callback_query(filters.regex(r"^addwatch#"))
 async def addwatch_cb(bot, query):
     _, title = query.data.split("#")
-    # Database watchlist connection setup here later
+    # Placeholder for actual watchlist DB addition
     await query.answer(f"⭐ {title} Added to Watchlist!", show_alert=True)
+    
+    # Change button to Remove from Watchlist dynamically
+    new_btn = [
+        [InlineKeyboardButton("👀 WATCH NOW", callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
+        [InlineKeyboardButton("➖ REMOVE FROM WATCHLIST", callback_data=f"remwatch#{title}")],
+        [InlineKeyboardButton("🔙 BACK", callback_data=query.message.reply_markup.inline_keyboard[2][0].callback_data), 
+         InlineKeyboardButton("❌ CLOSE", callback_data="close_data")]
+    ]
+    await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_btn))
+
+@Client.on_callback_query(filters.regex(r"^remwatch#"))
+async def remwatch_cb(bot, query):
+    _, title = query.data.split("#")
+    # Placeholder for actual watchlist DB removal
+    await query.answer(f"➖ {title} Removed from Watchlist!", show_alert=True)
+    
+    new_btn = [
+        [InlineKeyboardButton("👀 WATCH NOW", callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
+        [InlineKeyboardButton("⭐ ADD TO WATCHLIST", callback_data=f"addwatch#{title}")],
+        [InlineKeyboardButton("🔙 BACK", callback_data=query.message.reply_markup.inline_keyboard[2][0].callback_data), 
+         InlineKeyboardButton("❌ CLOSE", callback_data="close_data")]
+    ]
+    await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_btn))
     
