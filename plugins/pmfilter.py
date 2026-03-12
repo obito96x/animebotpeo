@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
 
 if not hasattr(temp, 'SEARCHES'): temp.SEARCHES = {}
+if not hasattr(temp, 'SEASONS_CACHE'): temp.SEASONS_CACHE = {} # Naya Cache For Seasons
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 SEARCH_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 
@@ -60,7 +61,6 @@ SEASON_EPISODE_PATTERNS = [
 def extract_file_info(filename, fallback_index=0):
     season = "1"
     episode = str(fallback_index)
-    match_start_index = len(filename)
     
     for pattern, (s_idx, e_idx) in SEASON_EPISODE_PATTERNS:
         match = pattern.search(filename)
@@ -71,7 +71,6 @@ def extract_file_info(filename, fallback_index=0):
             if e_idx is not None:
                 try: episode = str(int(match.group(e_idx)))
                 except: pass
-            match_start_index = match.start()
             break
 
     lower_name = filename.lower()
@@ -97,7 +96,7 @@ def extract_file_info(filename, fallback_index=0):
     clean_title = " ".join(clean_title.split())
     if not clean_title: clean_title = "Unknown Anime"
     
-    return clean_title, season, episode, qual
+    return clean_title.title(), season, episode, qual
 
 # ==========================================
 # 💬 MAIN SEARCH HANDLERS
@@ -115,7 +114,7 @@ async def pm_search_handler(bot, message):
     await message.reply_text(f"<b>🙋 ʜᴇʏ {message.from_user.first_name}, \n\nPlease use the `/search` command to find Anime/Manga!\n\nExample: `/search Naruto`</b>")
 
 # ==========================================
-# 🔍 STEP 1: SEARCH RESULTS UI (VIOLET EXACT)
+# 🔍 STEP 1: SEARCH RESULTS UI
 # ==========================================
 async def auto_filter(client, msg):
     search = msg.text.lower()
@@ -130,25 +129,31 @@ async def auto_filter(client, msg):
 
     key = f"{msg.chat.id}-{msg.id}"
     
+    # 🧠 GROUP FILES BY CLEAN NAME AND SEASON
     grouped_titles = {}
     for i, f in enumerate(files):
         title, season, ep, qual = extract_file_info(f.file_name, i)
-        if title not in grouped_titles: grouped_titles[title] = []
+        
+        if title not in grouped_titles: 
+            grouped_titles[title] = {"seasons": {}}
+            
+        if season not in grouped_titles[title]["seasons"]:
+            grouped_titles[title]["seasons"][season] = []
+            
         ep_int = int(ep) if ep.isdigit() else 0
-        grouped_titles[title].append((f, ep_int, qual))
+        grouped_titles[title]["seasons"][season].append((f, ep_int, qual))
         
     temp.SEARCHES[key] = grouped_titles
     titles = list(grouped_titles.keys())
     
     btn = []
     for i, title in enumerate(titles[:10]): 
-        ep_count = len(grouped_titles[title])
-        btn.append([InlineKeyboardButton(f"📺 {title} ({ep_count} EP)", callback_data=f"stitle#{key}#{i}")])
+        total_ep_count = sum([len(s) for s in grouped_titles[title]["seasons"].values()])
+        btn.append([InlineKeyboardButton(f"📺 {title} ({total_ep_count} EP)", callback_data=f"stitle#{key}#{i}")])
         
     btn.append([InlineKeyboardButton("📄 1/1", callback_data="pages")])
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
     
-    # 🎯 Violet Search Banner Format
     cap = f"🎯 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ</b>\n\n"
     cap += f"▸ <b>Qᴜᴇʀʏ:</b> /search {search_clean}\n"
     cap += f"▸ <b>Rᴇsᴜʟᴛꜱ:</b> {len(titles)} ᴀɴɪᴍᴇ\n"
@@ -170,19 +175,20 @@ async def select_title_cb(client, query):
     
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
-    files_data = grouped_titles[selected_title]
+    title_data = grouped_titles[selected_title]
+    total_eps = sum([len(s) for s in title_data["seasons"].values()])
     
     anime_info = await get_anime_info(selected_title) if get_anime_info else {}
     
-    cover = anime_info.get("cover_image", SEARCH_BANNER)
+    # Optional cover handling, fallback to Search Banner (Ensure Anilist returns 16:9 images if configured)
+    cover = anime_info.get("cover_image", SEARCH_BANNER) 
     rating = anime_info.get('score', 'N/A')
     atype = anime_info.get('format', 'TV Series')
     status = anime_info.get('status', 'FINISHED')
-    eps = anime_info.get('episodes', len(files_data))
+    eps = anime_info.get('episodes', total_eps)
     genres = ", ".join(anime_info.get('genres', ['Action', 'Adventure']))
     synopsis = anime_info.get('description', 'No synopsis available.')[:250]
     
-    # ┌────────────────────── Box format
     cap = f"<b>{selected_title}</b>\n"
     cap += f"┌──────────────────────\n"
     cap += f"» <b>Type:</b> {atype}\n"
@@ -193,21 +199,45 @@ async def select_title_cb(client, query):
     cap += f"‣ <b>𝗦𝗬𝗡𝗢𝗣𝗦𝗜𝗦</b>\n"
     cap += f"➟ <i>{synopsis}...</i>"
 
-    btn = [
-        [InlineKeyboardButton("👀 WATCH NOW", callback_data=f"swatch#{key}#{index}#0")],
-        [InlineKeyboardButton("⭐ ADD TO WATCHLIST", callback_data=f"addwatch#{selected_title}")],
-        [InlineKeyboardButton("🔙 BACK", callback_data=f"sback#{key}"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")]
-    ]
+    # 🔥 Check if multiple seasons exist
+    available_seasons = list(title_data["seasons"].keys())
+    available_seasons.sort(key=lambda x: int(x) if x.isdigit() else 0)
+    
+    btn = []
+    
+    # If Anime has multiple seasons, show Season Buttons first!
+    if len(available_seasons) > 1:
+        for s in available_seasons:
+            s_ep_count = len(title_data["seasons"][s])
+            btn.append([InlineKeyboardButton(f"✨ Season {s} ({s_ep_count} EP)", callback_data=f"sselect#{key}#{index}#{s}")])
+    else:
+        # Direct Watch Now if only 1 season exists
+        only_s = available_seasons[0]
+        btn.append([InlineKeyboardButton("👀 WATCH NOW", callback_data=f"swatch#{key}#{index}#{only_s}#0")])
+        
+    btn.append([InlineKeyboardButton("⭐ ADD TO WATCHLIST", callback_data=f"addwatch#{selected_title}")])
+    btn.append([InlineKeyboardButton("🔙 BACK", callback_data=f"sback#{key}"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
     
     await query.message.edit_media(InputMediaPhoto(media=cover, caption=cap))
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btn))
+
+
+# ==========================================
+# 🌟 STEP 2.5: SEASON TO EPISODE REDIRECT
+# ==========================================
+@Client.on_callback_query(filters.regex(r"^sselect#"))
+async def season_select_cb(client, query):
+    _, key, index, season_num = query.data.split("#")
+    # Redirect to swatch (Episode Grid) but for the specific season!
+    query.data = f"swatch#{key}#{index}#{season_num}#0"
+    await swatch_cb(client, query)
 
 # ==========================================
 # 🔢 STEP 3: EPISODE GRID UI (30 EPs per page)
 # ==========================================
 @Client.on_callback_query(filters.regex(r"^swatch#"))
 async def swatch_cb(client, query):
-    _, key, index, offset = query.data.split("#")
+    _, key, index, season_num, offset = query.data.split("#")
     offset = int(offset)
     
     grouped_titles = temp.SEARCHES.get(key)
@@ -215,34 +245,34 @@ async def swatch_cb(client, query):
     
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
-    files_data = grouped_titles[selected_title]
-    total_eps = len(files_data)
     
-    # 🧠 PRO SORTING: Sort by integer episode number!
-    files_data.sort(key=lambda x: x[1])
-    current_chunk = files_data[offset:offset+30]
+    # Fetch episodes for ONLY the selected Season
+    season_files = grouped_titles[selected_title]["seasons"].get(season_num, [])
+    total_eps = len(season_files)
+    
+    season_files.sort(key=lambda x: x[1])
+    current_chunk = season_files[offset:offset+30]
     
     end_offset = min(offset + 30, total_eps)
-    cap = f"📺 <b>{selected_title}</b>\n\n"
+    cap = f"📺 <b>{selected_title} (Season {season_num})</b>\n\n"
     cap += f"<b>Select episode ({offset+1}-{end_offset} of {total_eps}):</b>"
 
     btn = []
     row = []
     for f, ep_num, qual in current_chunk:
-        # Show exact episode number on the button
         row.append(InlineKeyboardButton(str(ep_num), callback_data=f"file#{f.file_id}"))
         if len(row) == 5:
             btn.append(row)
             row = []
     if row: btn.append(row)
     
-    btn.append([InlineKeyboardButton("📥 DOWNLOAD ALL EPISODES", callback_data=f"downall#{key}#{index}#{offset}")])
+    btn.append([InlineKeyboardButton("📥 DOWNLOAD ALL EPISODES", callback_data=f"downall#{key}#{index}#{season_num}#{offset}")])
     
     page_row = []
     if offset > 0:
-        page_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"swatch#{key}#{index}#{offset-30}"))
+        page_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"swatch#{key}#{index}#{season_num}#{offset-30}"))
     if total_eps > offset + 30:
-        page_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"swatch#{key}#{index}#{offset+30}"))
+        page_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"swatch#{key}#{index}#{season_num}#{offset+30}"))
     if page_row: btn.append(page_row)
         
     btn.append([InlineKeyboardButton("🔙 BACK", callback_data=f"stitle#{key}#{index}"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
@@ -261,8 +291,8 @@ async def back_to_search(client, query):
     titles = list(grouped_titles.keys())
     btn = []
     for i, title in enumerate(titles[:10]):
-        ep_count = len(grouped_titles[title])
-        btn.append([InlineKeyboardButton(f"📺 {title} ({ep_count} EP)", callback_data=f"stitle#{key}#{i}")])
+        total_ep_count = sum([len(s) for s in grouped_titles[title]["seasons"].values()])
+        btn.append([InlineKeyboardButton(f"📺 {title} ({total_ep_count} EP)", callback_data=f"stitle#{key}#{i}")])
         
     btn.append([InlineKeyboardButton("📄 1/1", callback_data="pages")])
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
@@ -275,28 +305,23 @@ async def back_to_search(client, query):
 @Client.on_callback_query(filters.regex(r"^file#"))
 async def single_file_cb(bot, query):
     _, file_id = query.data.split("#")
-    # Redirects to PM to get the exact file
     await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=file_{file_id}")
 
 @Client.on_callback_query(filters.regex(r"^downall#"))
 async def downall_cb(bot, query):
-    # Extracts the chunk (max 30 episodes) from the current page
-    _, key, index, offset = query.data.split("#")
+    _, key, index, season_num, offset = query.data.split("#")
     offset = int(offset)
     grouped_titles = temp.SEARCHES.get(key)
     if not grouped_titles: return await query.answer("Session Expired!", show_alert=True)
     
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
-    files_data = grouped_titles[selected_title]
-    files_data.sort(key=lambda x: x[1])
-    current_chunk = files_data[offset:offset+30]
+    season_files = grouped_titles[selected_title]["seasons"].get(season_num, [])
+    
+    season_files.sort(key=lambda x: x[1])
+    current_chunk = season_files[offset:offset+30]
     
     await query.answer("Sending episodes to your PM... ⏳", show_alert=False)
-    
-    # Generate batch token or redirect to PM for all 30 files
-    bot_username = bot.me.username if bot.me else temp.U_NAME
-    # Using a loop just to trigger the files. For better security we can send direct.
     for f, ep, qual in current_chunk:
         try:
             await bot.send_cached_media(chat_id=query.from_user.id, file_id=f.file_id)
@@ -314,12 +339,10 @@ async def close_cb(bot, query):
 @Client.on_callback_query(filters.regex(r"^addwatch#"))
 async def addwatch_cb(bot, query):
     _, title = query.data.split("#")
-    # Placeholder for actual watchlist DB addition
     await query.answer(f"⭐ {title} Added to Watchlist!", show_alert=True)
     
-    # Change button to Remove from Watchlist dynamically
     new_btn = [
-        [InlineKeyboardButton("👀 WATCH NOW", callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
+        [InlineKeyboardButton(query.message.reply_markup.inline_keyboard[0][0].text, callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
         [InlineKeyboardButton("➖ REMOVE FROM WATCHLIST", callback_data=f"remwatch#{title}")],
         [InlineKeyboardButton("🔙 BACK", callback_data=query.message.reply_markup.inline_keyboard[2][0].callback_data), 
          InlineKeyboardButton("❌ CLOSE", callback_data="close_data")]
@@ -329,14 +352,13 @@ async def addwatch_cb(bot, query):
 @Client.on_callback_query(filters.regex(r"^remwatch#"))
 async def remwatch_cb(bot, query):
     _, title = query.data.split("#")
-    # Placeholder for actual watchlist DB removal
     await query.answer(f"➖ {title} Removed from Watchlist!", show_alert=True)
     
     new_btn = [
-        [InlineKeyboardButton("👀 WATCH NOW", callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
+        [InlineKeyboardButton(query.message.reply_markup.inline_keyboard[0][0].text, callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
         [InlineKeyboardButton("⭐ ADD TO WATCHLIST", callback_data=f"addwatch#{title}")],
         [InlineKeyboardButton("🔙 BACK", callback_data=query.message.reply_markup.inline_keyboard[2][0].callback_data), 
          InlineKeyboardButton("❌ CLOSE", callback_data="close_data")]
     ]
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_btn))
-    
+                          
