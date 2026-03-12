@@ -347,11 +347,10 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
             current = temp.CURRENT
             temp.CANCEL = False
             
-            # Create list of message IDs from the forwarded message down to 1
-            # Adjusting if there was a setskip (current)
+            # Fetch message IDs from latest down to 1
             message_ids = list(range(lst_msg_id - current, 0, -1))
             
-            # Fetch in chunks of 200 to bypass Telegram limits securely
+            # Fetch in chunks of 200 (Safe for Telegram Bots)
             for i in range(0, len(message_ids), 200):
                 if temp.CANCEL: break
                 chunk = message_ids[i:i+200]
@@ -369,7 +368,6 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                     if temp.CANCEL: break
                     current += 1
                     
-                    # Update status message every 100 files
                     if current % 100 == 0:
                         can = [[InlineKeyboardButton('Cancel', callback_data='index_cancel')]]
                         await msg.edit_text(
@@ -391,10 +389,10 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                         unsupported += 1
                         continue
                     
+                    # Extract file name safely for Manga Photos
                     filename = getattr(media, 'file_name', '')
                     if not filename:
                         if message.caption:
-                            # Use first line of caption for manga photos
                             filename = message.caption.split('\n')[0][:80]
                         elif message.media == enums.MessageMediaType.PHOTO:
                             filename = f"Manga_Photo_Ch_{message.id}.jpg"
@@ -417,4 +415,9 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                     if aynav: total_files += 1
                     elif vnay == 0: duplicate += 1
                     elif vnay == 2: errors += 1
-               
+                    
+        except Exception as e:
+            logger.exception(e)
+            await msg.edit(f'Error: {e}')
+        else:
+            await msg.edit(f'Successfully saved <code>{total_files}</code> files to {category.capitalize()} dataBase!\nDuplicate Files Skipped: <code>{duplicate}</code>\nErrors/Unsupported: <code>{errors + unsupported}</code>')
