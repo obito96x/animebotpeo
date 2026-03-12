@@ -292,7 +292,7 @@ async def back_to_search(client, query):
     btn = []
     for i, title in enumerate(titles[:10]):
         total_ep_count = sum([len(s) for s in grouped_titles[title]["seasons"].values()])
-        btn.append([InlineKeyboardButton(f"📺 {title} ({total_ep_count} EP)", callback_data=f"stitle#{key}#{i}")])
+        btn.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"stitle#{key}#{i}")])
         
     btn.append([InlineKeyboardButton("📄 1/1", callback_data="pages")])
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
