@@ -391,7 +391,7 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                         unsupported += 1
                         continue
                     
-                    # 🔥 THE ULTIMATE BUG FIX: Extract file name safely for Manga Photos
+                    # 🔥 THE ULTIMATE BUG FIX: Handle Manga Photos Correctly (Prevent mime_type Crash)
                     filename = getattr(media, 'file_name', '')
                     if not filename:
                         if message.caption:
@@ -402,8 +402,15 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                         else:
                             filename = f"Unknown_File_{message.id}"
                             
-                    # Attach the filename back to the media object to prevent crash in ia_filterdb.py
+                    # Attach the filename back to the media object
                     media.file_name = filename
+                    
+                    # 🔥 ADD MISSING MIME TYPE FOR PHOTOS (Prevents crash in ia_filterdb)
+                    if not hasattr(media, 'mime_type') or not media.mime_type:
+                        if message.media == enums.MessageMediaType.PHOTO:
+                            media.mime_type = "image/jpeg"
+                        else:
+                            media.mime_type = "application/octet-stream"
                     
                     title, season, episode, quality = extract_file_info(filename, current, category)
                     
