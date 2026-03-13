@@ -4,7 +4,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedi
 from pyrogram.errors import FloodWait
 
 from database.users_chats_db import db
-from database.ia_filterdb import get_search_results
+from database.ia_filterdb import Media, Media2 # Direct import for unlimited search
 from utils import temp, get_settings
 from info import *
 
@@ -22,34 +22,29 @@ OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 SEARCH_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 
 # ==========================================
-# 🧠 SUPER-AGGRESSIVE CLEANER & EXTRACTOR
+# 🧠 GOD-LEVEL CLEANER & EXTRACTOR
 # ==========================================
 def extract_and_clean(filename):
     ep_num = "0"
     
-    # 1. Extract Chapter/Episode safely
-    match = re.search(r'(?i)(?:ch|chapter|ep|episode|vol|v|e)[\s\-]*0*(\d+(?:\.\d+)?)', filename)
+    # 1. Extract Chapter/Episode Number (Handles [C225.5], [S226], Ch-225.5, etc.)
+    match = re.search(r'(?i)(?:\[C|\[S|ch[\-\s]*|ep[\-\s]*|vol[\-\s]*|v|e|season[\-\s]*)0*(\d+(?:\.\d+)?)', filename)
     if match:
         ep_num = match.group(1)
     else:
-        match = re.search(r'(?i)s\d{1,2}e0*(\d+)', filename)
-        if match: 
-            ep_num = match.group(1)
-        else:
-            match = re.search(r'(?i)[- ]\s*0*(\d+(?:\.\d+)?)\s*(?:1080p|720p|480p|mkv|mp4|pdf|cbz|cbr)', filename)
-            if match: ep_num = match.group(1)
+        match = re.search(r'(?i)[- ]\s*0*(\d+(?:\.\d+)?)\s*(?:1080p|720p|480p|mkv|mp4|pdf|cbz|cbr)', filename)
+        if match: ep_num = match.group(1)
 
-    # 2. Clean Name completely (Stripping everything except core name)
+    # 2. Clean Name completely
     name = filename
-    name = re.sub(r'\[.*?\]|\(.*?\)', '', name) # Remove ALL Brackets
+    name = re.sub(r'\[.*?\]|\(.*?\)', '', name) # Remove ALL Brackets like [AC], [1080p]
     name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr|jpg|png)$', '', name, flags=re.IGNORECASE)
-    # Cut off anything starting with Ch, Ep, Season, etc.
-    name = re.split(r'(?i)(?:\s-\s)?(?:ch|chapter|ep|episode|vol|volume|season|s\d{1,2}e\d{1,4})\s*\d+', name)[0]
-    name = re.split(r'(?i)\s-\s\d+', name)[0] # Split by "- 123"
+    name = re.sub(r'[^\w\s\.\-]', ' ', name) # Remove weird symbols like ⇉, ⌯
+    name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season)\b', name)[0] # Chop at Ep/Ch
     name = re.split(r'(?i)\bs\d{1,2}\b', name)[0] # Chop at S01
-    name = re.sub(r'(?i)@\w+', '', name) # Remove Usernames
+    name = re.sub(r'(?i)@\w+', '', name) # Remove Telegram Usernames
     name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web|dl|rip|dual|audio|hindi|english|subbed|dubbed)\b', '', name)
-    name = re.sub(r'[^a-zA-Z0-9\s]', ' ', name).strip()
+    name = re.sub(r'[^a-zA-Z0-9\s]', ' ', name).strip() # Final symbol strip
     name = " ".join(name.split()).title()
 
     return name if name else "Unknown", ep_num
@@ -94,44 +89,51 @@ async def fetch_anilist_16x9(query, category="anime"):
     return None
 
 # ==========================================
-# 🔍 AUTO FILTER (SUPPORTS /ANIME, /MANGA)
+# 🔍 AUTO FILTER (UNLIMITED SEARCH FIX)
 # ==========================================
 async def auto_filter(client, msg, req_cat=None):
     search = msg.text.lower()
     if len(search) < 2 or len(search) > 100: return
     
-    m = await msg.reply_text(f'**🔎 Searching...** `{search}`')
+    m = await msg.reply_text(f'**🔎 Searching Database...** `{search}`')
     search_clean = re.sub(r"[:-]", "", search.replace("-", " ")).strip()
     
-    files, _, _ = await get_search_results(msg.chat.id, search_clean, offset=0, filter=True)
+    # 🔥 UNLIMITED SEARCH QUERY (Bypasses the 10-50 limit)
+    regex_pattern = {"$regex": search_clean.replace(" ", ".*"), "$options": "i"}
+    cursor1 = Media.find({"file_name": regex_pattern})
+    cursor2 = Media2.find({"file_name": regex_pattern})
+    
+    files = await cursor1.to_list(length=2000) + await cursor2.to_list(length=2000)
+    
     if not files: 
         return await m.edit("<b>❌ No Anime/Manga found with this name. Check spelling!</b>")
 
     key = f"{msg.chat.id}-{msg.id}"
     grouped_titles = {}
     
+    search_words = search_clean.split()
+    prefix = " ".join(search_words[:2]).lower() if len(search_words) >= 2 else search_clean.lower()
+    
     for f in files:
         title, ep = extract_and_clean(f.file_name)
         is_manga = any(x in f.file_name.lower() for x in ['.pdf', '.cbz', '.cbr', 'manga', 'ch '])
         cat = "manga" if is_manga else "anime"
         
-        # Filter by requested category if using /anime or /manga
-        if req_cat and cat != req_cat:
-            continue
+        if req_cat and cat != req_cat: continue
             
-        # Normalize key to merge slightly different names (e.g. "Naruto Shippuden" and "Naruto  Shippuden")
-        norm_key = re.sub(r'[^a-z0-9]', '', title.lower())
-        
-        found_key = None
-        for existing_title in grouped_titles.keys():
-            if re.sub(r'[^a-z0-9]', '', existing_title.lower()) == norm_key:
-                found_key = existing_title
-                break
-                
-        if found_key:
-            grouped_titles[found_key]["files"].append((f, ep))
-        else:
-            grouped_titles[title] = {"files": [(f, ep)], "category": cat}
+        if prefix in title.lower() or search_clean.lower() in f.file_name.lower().replace('.',' '):
+            title = search_clean.title()
+            
+        if title not in grouped_titles: 
+            grouped_titles[title] = {"files": [], "category": cat, "seen_eps": set()}
+            
+        try: ep_val = float(ep) if '.' in ep else int(ep)
+        except: ep_val = 0
+            
+        # 🔥 DUPLICATE CHAPTER REMOVER (10 Channels issue fixed)
+        if ep_val not in grouped_titles[title]["seen_eps"]:
+            grouped_titles[title]["files"].append((f, ep_val))
+            grouped_titles[title]["seen_eps"].add(ep_val)
             
     if not grouped_titles:
         return await m.edit(f"<b>❌ No {req_cat if req_cat else 'files'} found for this query!</b>")
@@ -140,17 +142,10 @@ async def auto_filter(client, msg, req_cat=None):
     titles = list(grouped_titles.keys())
     
     btn = []
-    # Now shows up to 30 titles instead of 10!
     for i, title in enumerate(titles[:30]): 
         cat = grouped_titles[title]["category"]
         total_eps = len(grouped_titles[title]["files"])
-        
-        # 🟢 MANGA: Sirf Book aur Name | ANIME: TV aur X EP
-        if cat == "manga":
-            label = f"📚 {title}"
-        else:
-            label = f"📺 {title} ({total_eps} EP)"
-            
+        label = f"📚 {title}" if cat == "manga" else f"📺 {title} ({total_eps} EP)"
         btn.append([InlineKeyboardButton(label, callback_data=f"stitle#{key}#{i}")])
         
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
@@ -182,7 +177,6 @@ async def select_title_cb(client, query):
         anime_info = await fetch_anilist_16x9(selected_title, cat)
         if not anime_info: anime_info = {}
         
-        # Get English Title if available
         anilist_title = anime_info.get('title', {})
         display_title = anilist_title.get('english') or anilist_title.get('romaji') or selected_title
         
@@ -225,6 +219,10 @@ async def select_title_cb(client, query):
 # ==========================================
 # 🔢 STEP 3: 3-COLUMN GRID
 # ==========================================
+def safe_float(val):
+    try: return float(val)
+    except: return 0.0
+
 @Client.on_callback_query(filters.regex(r"^swatch#"))
 async def swatch_cb(client, query):
     try:
@@ -240,7 +238,8 @@ async def swatch_cb(client, query):
         files_data = grouped_titles[selected_title]["files"]
         total_eps = len(files_data)
         
-        files_data.sort(key=lambda x: x[1])
+        # 🔥 FLOAT SORTING: Ch 225.5 comes exactly after 225
+        files_data.sort(key=lambda x: safe_float(x[1]))
         current_chunk = files_data[offset:offset+30]
         
         cap = f"📚 <b>{selected_title}</b> ❞\n\n"
@@ -308,7 +307,7 @@ async def downall_cb(bot, query):
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
     files_data = grouped_titles[selected_title]["files"]
-    files_data.sort(key=lambda x: x[1])
+    files_data.sort(key=lambda x: safe_float(x[1]))
     current_chunk = files_data[offset:offset+30]
     
     await query.answer("Sending files to your PM... ⏳", show_alert=False)
