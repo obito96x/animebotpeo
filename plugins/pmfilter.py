@@ -4,7 +4,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedi
 from pyrogram.errors import FloodWait
 
 from database.users_chats_db import db
-from database.ia_filterdb import Media, Media2 # Direct import for unlimited search
+from database.ia_filterdb import Media, Media2 
 from utils import temp, get_settings
 from info import *
 
@@ -14,6 +14,11 @@ except ImportError:
     async def add_to_watchlist(u, t, c): pass
     async def remove_from_watchlist(u, t, c): pass
 
+try:
+    from plugins.anilist import fetch_anime_details as get_anime_info
+except ImportError:
+    get_anime_info = None
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
 
@@ -22,12 +27,10 @@ OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 SEARCH_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 
 # ==========================================
-# 🧠 GOD-LEVEL CLEANER & EXTRACTOR
+# 🧠 GOD-LEVEL CLEANER & FUZZY MATCHER
 # ==========================================
 def extract_and_clean(filename):
     ep_num = "0"
-    
-    # 1. Extract Chapter/Episode Number (Handles [C225.5], [S226], Ch-225.5, etc.)
     match = re.search(r'(?i)(?:\[C|\[S|ch[\-\s]*|ep[\-\s]*|vol[\-\s]*|v|e|season[\-\s]*)0*(\d+(?:\.\d+)?)', filename)
     if match:
         ep_num = match.group(1)
@@ -35,19 +38,36 @@ def extract_and_clean(filename):
         match = re.search(r'(?i)[- ]\s*0*(\d+(?:\.\d+)?)\s*(?:1080p|720p|480p|mkv|mp4|pdf|cbz|cbr)', filename)
         if match: ep_num = match.group(1)
 
-    # 2. Clean Name completely
     name = filename
-    name = re.sub(r'\[.*?\]|\(.*?\)', '', name) # Remove ALL Brackets like [AC], [1080p]
+    name = re.sub(r'\[.*?\]|\(.*?\)', '', name) 
     name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr|jpg|png)$', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'[^\w\s\.\-]', ' ', name) # Remove weird symbols like ⇉, ⌯
-    name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season)\b', name)[0] # Chop at Ep/Ch
-    name = re.split(r'(?i)\bs\d{1,2}\b', name)[0] # Chop at S01
-    name = re.sub(r'(?i)@\w+', '', name) # Remove Telegram Usernames
+    name = re.sub(r'[^\w\s\.\-]', ' ', name) 
+    name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season)\b', name)[0] 
+    name = re.split(r'(?i)\bs\d{1,2}\b', name)[0] 
+    name = re.sub(r'(?i)@\w+', '', name) 
     name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web|dl|rip|dual|audio|hindi|english|subbed|dubbed)\b', '', name)
-    name = re.sub(r'[^a-zA-Z0-9\s]', ' ', name).strip() # Final symbol strip
+    name = re.sub(r'[^a-zA-Z0-9\s]', ' ', name).strip() 
     name = " ".join(name.split()).title()
 
     return name if name else "Unknown", ep_num
+
+def is_similar(t1, t2):
+    """
+    🔥 FUZZY MATCHER: Yeh check karta hai agar file ke naam aadhe-adhoore hain 
+    ya 'The' missing hai toh unko same group mein merge kar dega!
+    """
+    stop_words = {'the', 'a', 'an', 'of', 'and', 'in', 'to', 'with', 'for', 'is', 'at', 'on', 'part'}
+    w1 = [x for x in re.sub(r'[^a-z0-9\s]', '', t1.lower()).split() if x not in stop_words]
+    w2 = [x for x in re.sub(r'[^a-z0-9\s]', '', t2.lower()).split() if x not in stop_words]
+    
+    if not w1 or not w2: return False
+    
+    s1, s2 = set(w1), set(w2)
+    intersection = s1.intersection(s2)
+    
+    # Check if 60% of the shorter name matches the longer name
+    match_ratio = len(intersection) / min(len(s1), len(s2))
+    return match_ratio >= 0.60
 
 def get_emoji(filename):
     ext = filename.split('.')[-1].lower() if '.' in filename else ''
@@ -89,7 +109,7 @@ async def fetch_anilist_16x9(query, category="anime"):
     return None
 
 # ==========================================
-# 🔍 AUTO FILTER (UNLIMITED SEARCH FIX)
+# 🔍 AUTO FILTER (SUPER SMART DB QUERY)
 # ==========================================
 async def auto_filter(client, msg, req_cat=None):
     search = msg.text.lower()
@@ -98,11 +118,17 @@ async def auto_filter(client, msg, req_cat=None):
     m = await msg.reply_text(f'**🔎 Searching Database...** `{search}`')
     search_clean = re.sub(r"[:-]", "", search.replace("-", " ")).strip()
     
-    # 🔥 UNLIMITED SEARCH QUERY (Bypasses the 10-50 limit)
-    regex_pattern = {"$regex": search_clean.replace(" ", ".*"), "$options": "i"}
+    # 🔥 DB BYPASS HACK: 'The' hata ke sirf starting ke 2 main words se DB search marega 
+    # Taaki aadhi khati hui files bhi pakad mein aa jayein!
+    db_search = re.sub(r'^(?i)(the|a|an)\s+', '', search_clean)
+    words = db_search.split()
+    core_search = ".*".join(words[:2]) if len(words) >= 2 else db_search
+    
+    regex_pattern = {"$regex": core_search, "$options": "i"}
     cursor1 = Media.find({"file_name": regex_pattern})
     cursor2 = Media2.find({"file_name": regex_pattern})
     
+    # 2000 limit se purane 10 chapter dikhne wali issue permanently khatam
     files = await cursor1.to_list(length=2000) + await cursor2.to_list(length=2000)
     
     if not files: 
@@ -111,29 +137,35 @@ async def auto_filter(client, msg, req_cat=None):
     key = f"{msg.chat.id}-{msg.id}"
     grouped_titles = {}
     
-    search_words = search_clean.split()
-    prefix = " ".join(search_words[:2]).lower() if len(search_words) >= 2 else search_clean.lower()
-    
     for f in files:
         title, ep = extract_and_clean(f.file_name)
         is_manga = any(x in f.file_name.lower() for x in ['.pdf', '.cbz', '.cbr', 'manga', 'ch '])
         cat = "manga" if is_manga else "anime"
         
         if req_cat and cat != req_cat: continue
-            
-        if prefix in title.lower() or search_clean.lower() in f.file_name.lower().replace('.',' '):
-            title = search_clean.title()
-            
-        if title not in grouped_titles: 
-            grouped_titles[title] = {"files": [], "category": cat, "seen_eps": set()}
+        
+        # Verify using Fuzzy Matcher
+        if not is_similar(search_clean, title) and words[0].lower() not in title.lower():
+            continue
             
         try: ep_val = float(ep) if '.' in ep else int(ep)
         except: ep_val = 0
             
-        # 🔥 DUPLICATE CHAPTER REMOVER (10 Channels issue fixed)
-        if ep_val not in grouped_titles[title]["seen_eps"]:
-            grouped_titles[title]["files"].append((f, ep_val))
-            grouped_titles[title]["seen_eps"].add(ep_val)
+        # 🔥 SMART GROUPING WITH FUZZY LOGIC
+        found_key = None
+        for existing_title in grouped_titles.keys():
+            if is_similar(existing_title, title):
+                found_key = existing_title
+                break
+                
+        if found_key:
+            if ep_val not in grouped_titles[found_key]["seen_eps"]:
+                grouped_titles[found_key]["files"].append((f, ep_val))
+                grouped_titles[found_key]["seen_eps"].add(ep_val)
+        else:
+            # Naya button banate waqt clean user search term ka hi use karega (e.g. "The Fragrant Flower Blooms With Dignity")
+            display_title = search_clean.title() if is_similar(search_clean, title) else title
+            grouped_titles[display_title] = {"files": [(f, ep_val)], "category": cat, "seen_eps": {ep_val}}
             
     if not grouped_titles:
         return await m.edit(f"<b>❌ No {req_cat if req_cat else 'files'} found for this query!</b>")
@@ -219,10 +251,6 @@ async def select_title_cb(client, query):
 # ==========================================
 # 🔢 STEP 3: 3-COLUMN GRID
 # ==========================================
-def safe_float(val):
-    try: return float(val)
-    except: return 0.0
-
 @Client.on_callback_query(filters.regex(r"^swatch#"))
 async def swatch_cb(client, query):
     try:
@@ -238,8 +266,8 @@ async def swatch_cb(client, query):
         files_data = grouped_titles[selected_title]["files"]
         total_eps = len(files_data)
         
-        # 🔥 FLOAT SORTING: Ch 225.5 comes exactly after 225
-        files_data.sort(key=lambda x: safe_float(x[1]))
+        # 🔥 SORTING BY NUMBER: Ch 225.5 automatically handles nicely
+        files_data.sort(key=lambda x: float(x[1]))
         current_chunk = files_data[offset:offset+30]
         
         cap = f"📚 <b>{selected_title}</b> ❞\n\n"
@@ -249,6 +277,7 @@ async def swatch_cb(client, query):
         btn = []
         row = []
         for f, ep_num in current_chunk:
+            # 225.0 will show as 225. 225.5 will show as 225.5
             fmt_ep = str(int(ep_num)) if ep_num == int(ep_num) else str(ep_num)
             icon = get_emoji(f.file_name)
             label = f"Ch {fmt_ep} {icon}" if cat == "manga" else f"Ep {fmt_ep} {icon}"
@@ -307,7 +336,7 @@ async def downall_cb(bot, query):
     titles = list(grouped_titles.keys())
     selected_title = titles[int(index)]
     files_data = grouped_titles[selected_title]["files"]
-    files_data.sort(key=lambda x: safe_float(x[1]))
+    files_data.sort(key=lambda x: float(x[1]))
     current_chunk = files_data[offset:offset+30]
     
     await query.answer("Sending files to your PM... ⏳", show_alert=False)
