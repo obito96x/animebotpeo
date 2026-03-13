@@ -1,27 +1,14 @@
-import os
-import re, sys
-import json
-import logging
-import asyncio
-import string
-import aiohttp
-import datetime
+import os, json, logging, asyncio, string, aiohttp, datetime
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database.watchlist_db import get_watchlist
 from database.ia_filterdb import Media, Media2
 from database.users_chats_db import db
 from plugins.pmfilter import auto_filter 
 from info import *
-from utils import get_size, temp
-
-# Anilist Fetcher (Safe Import)
-try:
-    from plugins.anilist import fetch_anime_details as get_anime_info
-except ImportError:
-    get_anime_info = None
+from utils import temp
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
@@ -34,33 +21,52 @@ ONGOING_MANGA_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 
 # =========================================
-# 🚀 START COMMAND & DEEP LINKS
+# 🚀 SEARCH CATEGORY ROUTERS
+# =========================================
+@Client.on_message(filters.command(["search", "s"]))
+async def search_all(client, message):
+    if len(message.command) < 2:
+        return await message.reply_text("<b>❌ Provide a name!\nExample:</b> `/search Naruto`")
+    message.text = " ".join(message.command[1:])
+    try: await auto_filter(client, message, req_cat=None) # Searches both
+    except Exception as e: await message.reply_text(f"<b>❌ Error:</b> {e}")
+
+@Client.on_message(filters.command(["anime"]))
+async def search_anime(client, message):
+    if len(message.command) < 2:
+        return await message.reply_text("<b>❌ Provide an Anime name!\nExample:</b> `/anime Naruto`")
+    message.text = " ".join(message.command[1:])
+    try: await auto_filter(client, message, req_cat="anime") # ONLY Anime
+    except Exception as e: await message.reply_text(f"<b>❌ Error:</b> {e}")
+
+@Client.on_message(filters.command(["manga"]))
+async def search_manga(client, message):
+    if len(message.command) < 2:
+        return await message.reply_text("<b>❌ Provide a Manga name!\nExample:</b> `/manga Solo Leveling`")
+    message.text = " ".join(message.command[1:])
+    try: await auto_filter(client, message, req_cat="manga") # ONLY Manga
+    except Exception as e: await message.reply_text(f"<b>❌ Error:</b> {e}")
+
+
+# =========================================
+# 🚀 START & BASIC COMMANDS
 # =========================================
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
     if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        buttons = [[
-            InlineKeyboardButton('➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀᴛ ➕', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
-        ]]
-        await message.reply("<b>Bot is Active! Send any Anime name to search.</b>", reply_markup=InlineKeyboardMarkup(buttons))
-        if not await db.get_chat(message.chat.id):
-            await db.add_chat(message.chat.id, message.chat.title)
+        btn = [[InlineKeyboardButton('➕ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀᴛ ➕', url=f'http://t.me/{temp.U_NAME}?startgroup=true')]]
+        await message.reply("<b>Bot is Active! Send any Anime name to search.</b>", reply_markup=InlineKeyboardMarkup(btn))
         return 
         
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(message.from_user.id, message.from_user.first_name)
         
-    # 🔴 DEEP LINK HANDLING (For A-Z links & Index links)
     if len(message.command) > 1:
         data = message.command[1]
-        
         if data.startswith('getfile'):
-            movies = data.split("-", 1)[1].replace('-', ' ')
-            message.text = movies 
-            try:
-                await auto_filter(client, message) 
-            except Exception as e:
-                await message.reply_text(f"<b>❌ Error searching:</b> {e}")
+            message.text = data.split("-", 1)[1].replace('-', ' ') 
+            try: await auto_filter(client, message) 
+            except Exception as e: await message.reply_text(f"<b>❌ Error searching:</b> {e}")
             return
             
         if data.startswith("BATCH"):
@@ -69,58 +75,41 @@ async def start(client, message):
             msgs = BATCH_FILES.get(file_id)
             if not msgs:
                 file = await client.download_media(file_id)
-                try:
-                    with open(file) as file_data:
-                        msgs = json.loads(file_data.read())
-                except:
-                    return await sts.edit("FAILED TO OPEN BATCH FILE.")
+                with open(file) as f: msgs = json.loads(f.read())
                 os.remove(file)
                 BATCH_FILES[file_id] = msgs
 
             for msg in msgs:
-                title = msg.get("title")
-                f_caption = msg.get("caption", f"{title}")
                 btn = [[InlineKeyboardButton('📌 ᴊᴏɪɴ ᴜᴘᴅᴀᴛᴇꜱ 📌', url=f"https://t.me/{OWNER_USERNAME}")]]
-                try:
-                    await client.send_cached_media(chat_id=message.from_user.id, file_id=msg.get("file_id"), caption=f_caption, reply_markup=InlineKeyboardMarkup(btn))
+                try: await client.send_cached_media(chat_id=message.from_user.id, file_id=msg.get("file_id"), caption=msg.get("caption"), reply_markup=InlineKeyboardMarkup(btn))
                 except FloodWait as e:
                     await asyncio.sleep(e.value + 1)
-                    await client.send_cached_media(chat_id=message.from_user.id, file_id=msg.get("file_id"), caption=f_caption, reply_markup=InlineKeyboardMarkup(btn))
+                    await client.send_cached_media(chat_id=message.from_user.id, file_id=msg.get("file_id"), caption=msg.get("caption"), reply_markup=InlineKeyboardMarkup(btn))
                 await asyncio.sleep(1)
             await sts.delete()
             return
 
-    # NORMAL START MENU
-    text = (
-        f"**Welcome to the Ultimate Anime & Manga Downloader, {message.from_user.first_name}! 🌟**\n\n"
-        "Explore complete collections, ongoing series, and download instantly.\n"
-        "Choose an option below to get started:"
-    )
+    text = f"**Welcome to the Ultimate Anime & Manga Downloader, {message.from_user.first_name}! 🌟**\n\nChoose an option below to get started:"
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"),
          InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")],
         [InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""),
-         InlineKeyboardButton("🆘 Help Guide", callback_data="help")],
-        [InlineKeyboardButton("👨‍💻 Admin", url=f"https://t.me/{OWNER_USERNAME}")]
+         InlineKeyboardButton("🆘 Help Guide", callback_data="help")]
     ])
-    
     await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=buttons)
+
+@Client.on_callback_query(filters.regex(r"^start$"))
+async def start_cb(client, query):
+    text = f"**Welcome to the Ultimate Anime & Manga Downloader, {query.from_user.first_name}! 🌟**"
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"), InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")],
+        [InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""), InlineKeyboardButton("🆘 Help Guide", callback_data="help")]
+    ])
+    await query.message.edit_caption(caption=text, reply_markup=buttons)
 
 # =========================================
 # 🔠 A-Z ALPHABETICAL INDEX CALLBACKS
 # =========================================
-@Client.on_callback_query(filters.regex(r"^start$"))
-async def start_cb(client, query):
-    text = f"**Welcome to the Ultimate Anime & Manga Downloader, {query.from_user.first_name}! 🌟**\n\nExplore complete collections, ongoing series, and download instantly."
-    buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"),
-         InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")],
-        [InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""),
-         InlineKeyboardButton("🆘 Help Guide", callback_data="help")],
-        [InlineKeyboardButton("👨‍💻 Admin", url=f"https://t.me/{OWNER_USERNAME}")]
-    ])
-    await query.message.edit_caption(caption=text, reply_markup=buttons)
-
 @Client.on_callback_query(filters.regex(r"^browse_(anime|manga)$"))
 async def browse_callback(client, query):
     category = query.data.split("_")[1]
@@ -172,34 +161,12 @@ async def show_letter_results(client, query):
     await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]), disable_web_page_preview=True)
 
 # =========================================
-# 🔍 SEARCH & HELP COMMANDS
+# 🔍 HELP & REQUEST COMMANDS
 # =========================================
-@Client.on_message(filters.command(["search", "s"]))
-async def search_anime_cmd(client, message):
-    if len(message.command) < 2:
-        return await message.reply_text("<b>❌ Provide an Anime/Manga name!\nExample:</b> `/search Naruto`")
-    
-    query_text = " ".join(message.command[1:])
-    message.text = query_text 
-    try:
-        await auto_filter(client, message)
-    except Exception as e:
-        await message.reply_text(f"<b>❌ Error:</b> {e}")
-
 @Client.on_message(filters.command("help"))
 async def help_cmd(client, message):
-    text = (
-        "**🤖 Bot Commands List:**\n\n"
-        "➤ `/search <name>` — Find Anime or Manga\n"
-        "➤ `/ongoing` — See currently airing Anime\n"
-        "➤ `/ongoing_manga` — See currently releasing Manga\n"
-        "➤ `/watchlist` — View your saved Anime\n"
-        "➤ `/library` — View your saved Manga/Manhwa\n"
-        "➤ `/todayschedule` — View today's anime release schedule\n"
-        "➤ `/request <name>` — Request an anime/manga to be added\n"
-    )
-    btn = [[InlineKeyboardButton("❌ Close", callback_data="close_data")]]
-    await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=InlineKeyboardMarkup(btn))
+    text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/ongoing_manga` — Airing Manga\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/todayschedule` — Today's schedule\n➤ `/request <name>` — Request add"
+    await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
 
 @Client.on_message(filters.command("request") & filters.private)
 async def request_cmd(client, message):
@@ -210,7 +177,8 @@ async def request_cmd(client, message):
     text = f"**🆕 New Request:**\n\n**Name:** `{req_name}`\n**Requested By:** {message.from_user.mention} (`{message.from_user.id}`)"
     
     try:
-        await client.send_message(INDEX_REQ_CHANNEL, text)
+        if INDEX_REQ_CHANNEL:
+            await client.send_message(INDEX_REQ_CHANNEL, text)
         await message.reply(f"✅ Your request for **{req_name}** has been sent to the admins!")
     except Exception:
         await message.reply(f"✅ Request logged: **{req_name}**")
@@ -308,16 +276,14 @@ async def ongoing_anime_cb(client, query):
     await query.answer(f"Fetching Anime schedule for {day}...", show_alert=False)
     
     start_ts, end_ts = get_day_timestamps(day)
+    # 🔥 FETCHING ENGLISH TITLES 🔥
     graphql_query = '''
-    query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { romaji } } } } }
+    query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { english romaji } } } } }
     '''
     data = await fetch_anilist_data(graphql_query, {"start": start_ts, "end": end_ts})
     
     if not data or 'data' not in data:
-        return await query.message.edit_caption(
-            "❌ Failed to fetch schedule from Anilist (API blocked or timeout).", 
-            reply_markup=get_ongoing_keyboard("anime")
-        )
+        return await query.message.edit_caption("❌ Failed to fetch schedule from Anilist.", reply_markup=get_ongoing_keyboard("anime"))
         
     schedule_list = data['data']['Page']['airingSchedules']
     if not schedule_list:
@@ -325,7 +291,8 @@ async def ongoing_anime_cb(client, query):
     else:
         text = f"📅 **Anime Airing on {day}:**\n\n"
         for item in schedule_list:
-            title = item['media']['title']['romaji']
+            title_dict = item['media']['title']
+            title = title_dict.get('english') or title_dict.get('romaji')
             ep = item['episode']
             text += f"⏰ **{title}** - Episode {ep}\n"
             
@@ -336,25 +303,23 @@ async def ongoing_manga_cb(client, query):
     day = query.data.split("_")[-1]
     await query.answer(f"Fetching Manga for {day}...", show_alert=False)
     
-    # Map day to a specific page number for Top Manga (Monday=1, Tuesday=2...)
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     page_num = days.index(day) + 1 
     
+    # 🔥 FETCHING ENGLISH TITLES 🔥
     graphql_query = '''
-    query($page: Int) { Page(page: $page, perPage: 15) { media(status: RELEASING, type: MANGA, sort: POPULARITY_DESC) { title { romaji } chapters } } }
+    query($page: Int) { Page(page: $page, perPage: 15) { media(status: RELEASING, type: MANGA, sort: POPULARITY_DESC) { title { english romaji } chapters } } }
     '''
     data = await fetch_anilist_data(graphql_query, {"page": page_num})
     
     if not data or 'data' not in data:
-        return await query.message.edit_caption(
-            "❌ Failed to fetch data from Anilist (API blocked or timeout).", 
-            reply_markup=get_ongoing_keyboard("manga")
-        )
+        return await query.message.edit_caption("❌ Failed to fetch data from Anilist.", reply_markup=get_ongoing_keyboard("manga"))
         
     manga_list = data['data']['Page']['media']
     text = f"📚 **Top Releasing Manga (Page {page_num} - {day}):**\n\n"
     for manga in manga_list:
-        title = manga['title']['romaji']
+        title_dict = manga['title']
+        title = title_dict.get('english') or title_dict.get('romaji')
         chaps = manga.get('chapters') or "?"
         text += f"📖 **{title}** (Ch: {chaps})\n"
         
@@ -362,16 +327,6 @@ async def ongoing_manga_cb(client, query):
 
 @Client.on_callback_query(filters.regex(r"^help$"))
 async def help_cb(client, query):
-    text = (
-        "**🤖 Bot Commands List:**\n\n"
-        "➤ `/search <name>` — Find Anime or Manga\n"
-        "➤ `/ongoing` — See currently airing Anime\n"
-        "➤ `/ongoing_manga` — See currently releasing Manga\n"
-        "➤ `/watchlist` — View your saved Anime\n"
-        "➤ `/library` — View your saved Manga/Manhwa\n"
-        "➤ `/todayschedule` — View today's anime release schedule\n"
-        "➤ `/request <name>` — Request an anime/manga to be added\n"
-    )
-    btn = [[InlineKeyboardButton("🔙 Back", callback_data="start")]]
-    await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup(btn))
+    text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/ongoing_manga` — Airing Manga\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/todayschedule` — Today's schedule\n➤ `/request <name>` — Request add"
+    await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="start")]]))
     
