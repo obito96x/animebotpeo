@@ -5,7 +5,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedi
 
 from database.watchlist_db import get_watchlist, get_random_pic, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker, add_pic, remove_pic, get_all_pics
 from database.ia_filterdb import Media, Media2
-from database.users_chats_db import db
+from database.database import ProObito
 from plugins.pmfilter import auto_filter 
 from info import *
 from utils import temp
@@ -14,16 +14,48 @@ logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 
-# Default Fallback Images
 DEF_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 
-async def auto_delete_task(messages, timer):
-    await asyncio.sleep(timer)
-    for msg in messages:
+# =========================================
+# ⏱️ VIP AUTO DELETE LOGIC (From Your Snippet)
+# =========================================
+def convert_time(duration_seconds: int) -> str:
+    periods = [('Yᴇᴀʀ', 31536000), ('Mᴏɴᴛʜ', 2592000), ('Dᴀʏ', 86400), ('Hᴏᴜʀ', 3600), ('Mɪɴᴜᴛᴇ', 60), ('Sᴇᴄᴏɴᴅ', 1)]
+    parts = []
+    for period_name, period_seconds in periods:
+        if duration_seconds >= period_seconds:
+            num_periods = duration_seconds // period_seconds
+            duration_seconds %= period_seconds
+            parts.append(f"{num_periods} {period_name}{'s' if num_periods > 1 else ''}")
+    if len(parts) == 0: return "0 Sᴇᴄᴏɴᴅ"
+    elif len(parts) == 1: return parts[0]
+    else: return ', '.join(parts[:-1]) +' ᴀɴᴅ '+ parts[-1]
+
+DEL_MSG = """<b>⚠️ Dᴜᴇ ᴛᴏ Cᴏᴘʏʀɪɢʜᴛ ɪssᴜᴇs....
+<blockquote>Yᴏᴜʀ ғɪʟᴇs ᴡɪʟʟ ʙᴇ ᴅᴇʟᴇᴛᴇᴅ ᴡɪᴛʜɪɴ <a href="https://t.me/{username}">{time}</a>. Sᴏ ᴘʟᴇᴀsᴇ ғᴏʀᴡᴀʀᴅ ᴛʜᴇᴍ ᴛᴏ ᴀɴʏ ᴏᴛʜᴇʀ ᴘʟᴀᴄᴇ ғᴏʀ ғᴜᴛᴜʀᴇ ᴀᴠᴀɪʟᴀʙɪʟɪᴛʏ.</blockquote></b>"""
+
+async def auto_del_notification(client, msg_chat_id, messages, delay_time, transfer=None):
+    bot_me = await client.get_me()
+    bot_username = bot_me.username
+    temp_msg = await client.send_message(msg_chat_id, DEL_MSG.format(username=bot_username, time=convert_time(delay_time)), disable_web_page_preview=True)
+    
+    await asyncio.sleep(delay_time)
+    
+    for m in messages:
         try:
-            if msg: await msg.delete()
+            if m: await m.delete()
         except: pass
+        
+    try:
+        if transfer:
+            name = "♻️ Cʟɪᴄᴋ Hᴇʀᴇ"
+            link = f"https://t.me/{bot_username}?start={transfer}"
+            button = [[InlineKeyboardButton(text=name, url=link), InlineKeyboardButton(text="Cʟᴏsᴇ ✖️", callback_data="close_data")]]
+            await temp_msg.edit_text(text=f"<b>Pʀᴇᴠɪᴏᴜs Mᴇssᴀɢᴇ ᴡᴀs Dᴇʟᴇᴛᴇᴅ 🗑\n<blockquote>Iғ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ɢᴇᴛ ᴛʜᴇ ғɪʟᴇs ᴀɢᴀɪɴ, ᴛʜᴇɴ ᴄʟɪᴄᴋ: [<a href='{link}'>{name}</a>] ʙᴜᴛᴛᴏɴ ʙᴇʟᴏᴡ ᴇʟsᴇ ᴄʟᴏsᴇ ᴛʜɪs ᴍᴇssᴀɢᴇ.</blockquote></b>", reply_markup=InlineKeyboardMarkup(button), disable_web_page_preview=True)
+        else:
+            await temp_msg.edit_text("<b><blockquote>Pʀᴇᴠɪᴏᴜs Mᴇssᴀɢᴇ ᴡᴀs Dᴇʟᴇᴛᴇᴅ 🗑</blockquote></b>")
+    except Exception as e: pass
 
 # =========================================
 # 🚀 SEARCH CATEGORY ROUTERS
@@ -50,7 +82,7 @@ async def search_manga(client, message):
     except Exception as e: await message.reply_text(f"<b>❌ Error:</b> {e}")
 
 # =========================================
-# 🚀 START COMMAND (FILE DEEP LINK FIX)
+# 🚀 START COMMAND & FILE DELIVERY
 # =========================================
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
@@ -65,21 +97,20 @@ async def start(client, message):
     if len(message.command) > 1:
         data = message.command[1]
         
-        # 🔥 FIX: Sending specific file from Inline Button
+        # 🟢 SINGLE FILE HANDLING + VIP AUTO DELETE
         if data.startswith('file_'):
             file_id = data.split('_', 1)[1]
             try:
                 sent_msg = await client.send_cached_media(chat_id=message.from_user.id, file_id=file_id)
                 timer = await get_autodelete_time()
                 stk_id = await get_sticker()
-                stk_msg, warn_msg = None, None
-                
+                stk_msg = None
                 if stk_id: stk_msg = await client.send_sticker(message.from_user.id, stk_id)
+                
                 if timer > 0:
-                    warn_msg = await message.reply(f"⚠️ **Note:** This file will be auto-deleted in {timer//60} minutes to prevent copyright issues.")
-                    asyncio.create_task(auto_delete_task([sent_msg, stk_msg, warn_msg], timer))
+                    asyncio.create_task(auto_del_notification(client, message.from_user.id, [sent_msg, stk_msg], timer, transfer=f"file_{file_id}"))
             except Exception as e:
-                await message.reply(f"❌ Error sending file: Try searching manually.")
+                await message.reply(f"❌ Error sending file.")
             return
 
         if data.startswith('getfile'):
@@ -88,6 +119,7 @@ async def start(client, message):
             except Exception as e: await message.reply_text(f"<b>❌ Error searching:</b> {e}")
             return
             
+        # 🟢 BATCH FILES HANDLING + VIP AUTO DELETE
         if data.startswith("BATCH"):
             sts = await message.reply("<b>Please wait...⏳</b>")
             file_id = data.split("-", 1)[1]
@@ -111,14 +143,13 @@ async def start(client, message):
                 await asyncio.sleep(1)
             await sts.delete()
             
-            # Batch Auto Delete
             timer = await get_autodelete_time()
             stk_id = await get_sticker()
-            stk_msg, warn_msg = None, None
-            if stk_id and sent_msgs: stk_msg = await client.send_sticker(message.from_user.id, stk_id)
+            if stk_id and sent_msgs: 
+                s_msg = await client.send_sticker(message.from_user.id, stk_id)
+                sent_msgs.append(s_msg)
             if timer > 0 and sent_msgs:
-                warn_msg = await message.reply(f"⚠️ **Note:** Above files will be auto-deleted in {timer//60} minutes.")
-                asyncio.create_task(auto_delete_task(sent_msgs + [stk_msg, warn_msg], timer))
+                asyncio.create_task(auto_del_notification(client, message.from_user.id, sent_msgs, timer, transfer=f"BATCH-{file_id}"))
             return
 
     # NORMAL START MENU
@@ -142,7 +173,7 @@ async def start_cb(client, query):
 async def set_timer_cmd(client, message):
     if len(message.command) > 1 and message.command[1].isdigit():
         await set_autodelete_time(int(message.command[1]))
-        await message.reply(f"✅ Auto-delete timer set to **{int(message.command[1]) // 60} minutes** ({message.command[1]} seconds).")
+        await message.reply(f"✅ Auto-delete timer set to **{convert_time(int(message.command[1]))}**.")
     else:
         await message.reply("⚠️ **Usage:** `/set_timer 300` (time in seconds, use 0 to disable)")
 
@@ -322,11 +353,11 @@ async def library_cmd(client, message):
     await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
 
 # ==========================================
-# 📅 ONGOING 7-DAYS UI (DYNAMIC PICS ADDED)
+# 📅 ONGOING 7-DAYS UI 
 # ==========================================
 async def fetch_anilist_data(query, variables):
     url = 'https://graphql.anilist.co'
-    headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Mozilla/5.0"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json={'query': query, 'variables': variables}, headers=headers) as resp:
@@ -374,9 +405,7 @@ async def ongoing_anime_cb(client, query):
     graphql_query = '''query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { english romaji } } } } }'''
     data = await fetch_anilist_data(graphql_query, {"start": start_ts, "end": end_ts})
     
-    # 🔥 DYNAMIC PIC PER DAY
     pic = await get_random_pic(day.lower(), DEF_BANNER)
-    
     if not data or 'data' not in data:
         return await query.message.edit_media(InputMediaPhoto(media=pic, caption="❌ Failed to fetch schedule."))
         
@@ -401,9 +430,7 @@ async def ongoing_manga_cb(client, query):
     graphql_query = '''query($page: Int) { Page(page: $page, perPage: 15) { media(status: RELEASING, type: MANGA, sort: POPULARITY_DESC) { title { english romaji } chapters } } }'''
     data = await fetch_anilist_data(graphql_query, {"page": page_num})
     
-    # 🔥 DYNAMIC PIC PER DAY
     pic = await get_random_pic(day.lower(), DEF_BANNER)
-    
     if not data or 'data' not in data:
         return await query.message.edit_media(InputMediaPhoto(media=pic, caption="❌ Failed to fetch data."))
         
