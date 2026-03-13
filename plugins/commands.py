@@ -4,6 +4,7 @@ import json
 import logging
 import asyncio
 import string
+import aiohttp
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -25,8 +26,6 @@ logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 
 HELP_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
-
-# 🔴 FIX: Tumhara username direct yahan daal diya hai taaki error na aaye!
 OWNER_USERNAME = "i_killed_my_clan"
 
 # =========================================
@@ -102,8 +101,7 @@ async def start(client, message):
         [InlineKeyboardButton("👨‍💻 Admin", url=f"https://t.me/{OWNER_USERNAME}")]
     ])
     
-    image_url = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
-    await message.reply_photo(photo=image_url, caption=text, reply_markup=buttons)
+    await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=buttons)
 
 # =========================================
 # 🔠 A-Z ALPHABETICAL INDEX CALLBACKS
@@ -152,38 +150,32 @@ async def show_letter_results(client, query):
         
     names = set()
     for f in files:
-        # 🔥 ADVANCED CLEANER: Removes [Erai-raws], (1080p), .mkv, and episode numbers like "- 01"
         clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', f.file_name)
-        clean_name = re.sub(r'\.(mkv|mp4|avi|mpe?g)$', '', clean_name, flags=re.IGNORECASE)
+        clean_name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr)$', '', clean_name, flags=re.IGNORECASE)
         clean_name = re.split(r'\s-\s|\sEp\s|\sE\d', clean_name)[0]
         clean_name = clean_name.replace(".", " ").replace("_", " ").strip()
         
-        # Double check letter matches
         if clean_name and (letter == "num" or clean_name.upper().startswith(letter)):
             names.add(clean_name)
             
-    # Sort names alphabetically
     sorted_names = sorted(names)
     text = f"<b>📁 Available titles starting with '{letter}'</b>\n\n"
-    
     bot_username = client.me.username if client.me else temp.U_NAME
     
-    for name in sorted_names[:60]: # Limit to 60 distinct anime to avoid message length limits
+    for name in sorted_names[:60]:
         safe_link = name.replace(" ", "-")
-        # 🔥 CLICK TO SEARCH MAGIC: Creates a deep link that auto searches the anime
         text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>{name}</a>\n"
         
     await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]))
 
 # =========================================
-# 🔍 SEARCH COMMAND FIX
+# 🔍 SEARCH & HELP COMMANDS
 # =========================================
 @Client.on_message(filters.command(["search", "s"]))
 async def search_anime_cmd(client, message):
     if len(message.command) < 2:
         return await message.reply_text("<b>❌ Provide an Anime/Manga name!\nExample:</b> `/search Naruto`")
     
-    # Send the correct search string to the engine
     query_text = " ".join(message.command[1:])
     message.text = query_text 
     
@@ -216,20 +208,16 @@ async def request_cmd(client, message):
     user = message.from_user
     
     text = f"**🆕 New Request:**\n\n**Name:** `{req_name}`\n**Requested By:** {user.mention} (`{user.id}`)"
-    
-    # Send request to Admin Log Channel
     if INDEX_REQ_CHANNEL:
         await client.send_message(INDEX_REQ_CHANNEL, text)
     await message.reply(f"✅ Your request for **{req_name}** has been sent to the admins!")
 
-
 # ==========================================
-# ⭐ WATCHLIST & LIBRARY (SEPARATE LISTS)
+# ⭐ WATCHLIST & LIBRARY
 # ==========================================
 @Client.on_message(filters.command("watchlist"))
 async def watchlist_cmd(client, message):
     user_id = message.from_user.id
-    # Fetch ONLY 'anime' category
     saved_anime = await get_watchlist(user_id, "anime")
     
     if not saved_anime:
@@ -246,7 +234,6 @@ async def watchlist_cmd(client, message):
 @Client.on_message(filters.command(["library", "readlist"]))
 async def library_cmd(client, message):
     user_id = message.from_user.id
-    # Fetch ONLY 'manga' category
     saved_manga = await get_watchlist(user_id, "manga")
     
     if not saved_manga:
@@ -260,17 +247,27 @@ async def library_cmd(client, message):
     btn = [[InlineKeyboardButton("❌ Close", callback_data="close_data")]]
     await message.reply_photo(photo=HELP_BANNER, caption=text, reply_markup=InlineKeyboardMarkup(btn))
 
-
 # ==========================================
-# 🌐 ANILIST LIVE DATA (ONGOING / SCHEDULE)
+# 🌐 100% FIXED ANILIST LIVE DATA ENGINE
 # ==========================================
 async def fetch_anilist_data(query, variables):
     url = 'https://graphql.anilist.co'
+    # 🔥 THIS IS THE FIX: Added Browser Headers to bypass Anilist Blocks
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={'query': query, 'variables': variables}) as resp:
-                return await resp.json()
+            async with session.post(url, json={'query': query, 'variables': variables}, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logger.error(f"Anilist Error: {resp.status}")
+                    return None
     except Exception as e:
+        logger.error(f"Anilist Exception: {e}")
         return None
 
 @Client.on_message(filters.command("ongoing"))
@@ -281,7 +278,7 @@ async def ongoing_anime_cmd(client, message):
     '''
     data = await fetch_anilist_data(query, {})
     if not data or 'data' not in data:
-        return await msg.edit_text("❌ Failed to fetch data from Anilist.")
+        return await msg.edit_text("❌ Failed to fetch data from Anilist. (API Blocked or Timeout)")
         
     anime_list = data['data']['Page']['media']
     text = "**🔥 Top 15 Ongoing Anime:**\n\n"
@@ -300,7 +297,7 @@ async def ongoing_manga_cmd(client, message):
     '''
     data = await fetch_anilist_data(query, {})
     if not data or 'data' not in data:
-        return await msg.edit_text("❌ Failed to fetch data from Anilist.")
+        return await msg.edit_text("❌ Failed to fetch data from Anilist. (API Blocked or Timeout)")
         
     manga_list = data['data']['Page']['media']
     text = "**🔥 Top 15 Ongoing Manga/Manhwa:**\n\n"
@@ -311,7 +308,7 @@ async def ongoing_manga_cmd(client, message):
         
     await msg.edit_text(text)
 
-@Client.on_message(filters.command("todayschedule"))
+@Client.on_message(filters.command(["todayschedule", "schedule"]))
 async def todayschedule_cmd(client, message):
     msg = await message.reply("🔄 Fetching today's anime schedule...")
     import time
@@ -319,11 +316,11 @@ async def todayschedule_cmd(client, message):
     query = '''
     query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { romaji } } } } }
     '''
-    variables = {"start": current_time, "end": current_time + 86400} # Next 24 hours
+    variables = {"start": current_time, "end": current_time + 86400}
     data = await fetch_anilist_data(query, variables)
     
     if not data or 'data' not in data:
-        return await msg.edit_text("❌ Failed to fetch schedule from Anilist.")
+        return await msg.edit_text("❌ Failed to fetch schedule from Anilist. (API Blocked or Timeout)")
         
     schedule_list = data['data']['Page']['airingSchedules']
     if not schedule_list:
@@ -336,4 +333,4 @@ async def todayschedule_cmd(client, message):
         text += f"⏰ **{title}** - Episode {ep}\n"
         
     await msg.edit_text(text)
-        
+                   
