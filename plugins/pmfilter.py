@@ -265,6 +265,10 @@ async def swatch_cb(client, query):
         page_row.append(InlineKeyboardButton(f"{current_page}/{total_pages}", callback_data="pages"))
         if total_eps > offset + 30: page_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"swatch#{key}#{index}#{offset+30}"))
         if page_row: btn.append(page_row)
+        
+        # 🔥 DOWNLOAD ALL BUTTON ADDED HERE IN THE GRID 🔥
+        down_grid_btn = "📥 DOWNLOAD ALL CHAPTERS" if cat == "manga" else "📥 DOWNLOAD ALL EPISODES"
+        btn.append([InlineKeyboardButton(down_grid_btn, callback_data=f"downall#{key}#{index}#{offset}")])
             
         btn.append([InlineKeyboardButton("🔙 BACK", callback_data=f"stitle#{key}#{index}"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
         await query.message.edit_caption(caption=cap, reply_markup=InlineKeyboardMarkup(btn))
@@ -347,4 +351,4 @@ async def remwatch_cb(bot, query):
     new_btn = list(query.message.reply_markup.inline_keyboard)
     new_btn[1] = [InlineKeyboardButton(btn_txt, callback_data=f"addwatch#{title}#{cat}")]
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_btn))
-            
+    
