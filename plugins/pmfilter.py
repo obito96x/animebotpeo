@@ -4,7 +4,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedi
 from pyrogram.errors import FloodWait
 
 from database.users_chats_db import db
-from database.ia_filterdb import Media, Media2 # Direct import for unlimited search
+from database.ia_filterdb import Media, Media2 
 from utils import temp, get_settings
 from info import *
 
@@ -22,12 +22,10 @@ OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 SEARCH_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 
 # ==========================================
-# 🧠 GOD-LEVEL CLEANER & EXTRACTOR
+# 🧠 GOD-LEVEL CLEANER & SMART MATCHER
 # ==========================================
 def extract_and_clean(filename):
     ep_num = "0"
-    
-    # 1. Extract Chapter/Episode Number (Handles [C225.5], [S226], Ch-225.5, etc.)
     match = re.search(r'(?i)(?:\[C|\[S|ch[\-\s]*|ep[\-\s]*|vol[\-\s]*|v|e|season[\-\s]*)0*(\d+(?:\.\d+)?)', filename)
     if match:
         ep_num = match.group(1)
@@ -35,19 +33,37 @@ def extract_and_clean(filename):
         match = re.search(r'(?i)[- ]\s*0*(\d+(?:\.\d+)?)\s*(?:1080p|720p|480p|mkv|mp4|pdf|cbz|cbr)', filename)
         if match: ep_num = match.group(1)
 
-    # 2. Clean Name completely
     name = filename
-    name = re.sub(r'\[.*?\]|\(.*?\)', '', name) # Remove ALL Brackets like [AC], [1080p]
+    name = re.sub(r'\[.*?\]|\(.*?\)', '', name) 
     name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr|jpg|png)$', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'[^\w\s\.\-]', ' ', name) # Remove weird symbols like ⇉, ⌯
-    name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season)\b', name)[0] # Chop at Ep/Ch
-    name = re.split(r'(?i)\bs\d{1,2}\b', name)[0] # Chop at S01
-    name = re.sub(r'(?i)@\w+', '', name) # Remove Telegram Usernames
+    name = re.sub(r'[^\w\s\.\-]', ' ', name) 
+    name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season)\b', name)[0] 
+    name = re.split(r'(?i)\bs\d{1,2}\b', name)[0] 
+    name = re.sub(r'(?i)@\w+', '', name) 
     name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web|dl|rip|dual|audio|hindi|english|subbed|dubbed)\b', '', name)
-    name = re.sub(r'[^a-zA-Z0-9\s]', ' ', name).strip() # Final symbol strip
+    name = re.sub(r'[^a-zA-Z0-9\s]', ' ', name).strip() 
     name = " ".join(name.split()).title()
 
     return name if name else "Unknown", ep_num
+
+def is_similar(t1, t2):
+    """
+    🔥 CORE LOGIC: Groups files that actually belong to the same anime.
+    Must share MORE than 50% of words of the shorter name to be grouped together.
+    (Keeps 'Black Clover' and 'Black Lagoon' separate, but merges 'Fragrant Flower' and 'The Fragrant Flower Blooms')
+    """
+    stop_words = {'the', 'a', 'an', 'of', 'and', 'in', 'to', 'with', 'for', 'is', 'at', 'on', 'part'}
+    w1 = [x for x in re.sub(r'[^a-z0-9\s]', '', t1.lower()).split() if x not in stop_words]
+    w2 = [x for x in re.sub(r'[^a-z0-9\s]', '', t2.lower()).split() if x not in stop_words]
+    
+    if not w1 or not w2: return False
+    
+    s1, s2 = set(w1), set(w2)
+    intersection = s1.intersection(s2)
+    
+    if min(len(s1), len(s2)) == 0: return False
+    match_ratio = len(intersection) / min(len(s1), len(s2))
+    return match_ratio > 0.50
 
 def get_emoji(filename):
     ext = filename.split('.')[-1].lower() if '.' in filename else ''
@@ -89,7 +105,7 @@ async def fetch_anilist_16x9(query, category="anime"):
     return None
 
 # ==========================================
-# 🔍 AUTO FILTER (UNLIMITED SEARCH FIX)
+# 🔍 AUTO FILTER (10% BROAD MATCH LOGIC)
 # ==========================================
 async def auto_filter(client, msg, req_cat=None):
     search = msg.text.lower()
@@ -98,21 +114,27 @@ async def auto_filter(client, msg, req_cat=None):
     m = await msg.reply_text(f'**🔎 Searching Database...** `{search}`')
     search_clean = re.sub(r"[:-]", "", search.replace("-", " ")).strip()
     
-    # 🔥 UNLIMITED SEARCH QUERY (Bypasses the 10-50 limit)
-    regex_pattern = {"$regex": search_clean.replace(" ", ".*"), "$options": "i"}
-    cursor1 = Media.find({"file_name": regex_pattern})
-    cursor2 = Media2.find({"file_name": regex_pattern})
+    # 🔥 THE 10% MATCH HACK: DB mein har ek word alag-alag search karega!
+    stop_words = {'the', 'a', 'an', 'of', 'and', 'in', 'to', 'with', 'for', 'is', 'at', 'on', 'part'}
+    search_words = [w for w in search_clean.split() if w.lower() not in stop_words and len(w) > 2]
     
-    files = await cursor1.to_list(length=2000) + await cursor2.to_list(length=2000)
+    if not search_words:
+        search_words = [search_clean]
+        
+    # Query creates a massive net: if ANY word matches, fetch the file!
+    regex_queries = [{"file_name": {"$regex": w, "$options": "i"}} for w in search_words]
+    query = {"$or": regex_queries}
+    
+    cursor1 = Media.find(query)
+    cursor2 = Media2.find(query)
+    
+    files = await cursor1.to_list(length=3000) + await cursor2.to_list(length=3000)
     
     if not files: 
-        return await m.edit("<b>❌ No Anime/Manga found with this name. Check spelling!</b>")
+        return await m.edit("<b>❌ No Anime/Manga found with this name. Try a different word!</b>")
 
     key = f"{msg.chat.id}-{msg.id}"
     grouped_titles = {}
-    
-    search_words = search_clean.split()
-    prefix = " ".join(search_words[:2]).lower() if len(search_words) >= 2 else search_clean.lower()
     
     for f in files:
         title, ep = extract_and_clean(f.file_name)
@@ -121,27 +143,31 @@ async def auto_filter(client, msg, req_cat=None):
         
         if req_cat and cat != req_cat: continue
             
-        if prefix in title.lower() or search_clean.lower() in f.file_name.lower().replace('.',' '):
-            title = search_clean.title()
-            
-        if title not in grouped_titles: 
-            grouped_titles[title] = {"files": [], "category": cat, "seen_eps": set()}
-            
         try: ep_val = float(ep) if '.' in ep else int(ep)
         except: ep_val = 0
             
-        # 🔥 DUPLICATE CHAPTER REMOVER (10 Channels issue fixed)
-        if ep_val not in grouped_titles[title]["seen_eps"]:
-            grouped_titles[title]["files"].append((f, ep_val))
-            grouped_titles[title]["seen_eps"].add(ep_val)
+        found_key = None
+        for existing_title in grouped_titles.keys():
+            if is_similar(existing_title, title):
+                found_key = existing_title
+                break
+                
+        if found_key:
+            if ep_val not in grouped_titles[found_key]["seen_eps"]:
+                grouped_titles[found_key]["files"].append((f, ep_val))
+                grouped_titles[found_key]["seen_eps"].add(ep_val)
+        else:
+            # Keeps the exact title extracted from the file
+            grouped_titles[title] = {"files": [(f, ep_val)], "category": cat, "seen_eps": {ep_val}}
             
     if not grouped_titles:
-        return await m.edit(f"<b>❌ No {req_cat if req_cat else 'files'} found for this query!</b>")
+        return await m.edit(f"<b>❌ No {req_cat if req_cat else 'files'} found matching those keywords!</b>")
         
     temp.SEARCHES[key] = grouped_titles
     titles = list(grouped_titles.keys())
     
     btn = []
+    # Up to 30 partial/10% matches will be displayed!
     for i, title in enumerate(titles[:30]): 
         cat = grouped_titles[title]["category"]
         total_eps = len(grouped_titles[title]["files"])
@@ -152,7 +178,7 @@ async def auto_filter(client, msg, req_cat=None):
     
     cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n"
     cap += f"▸ <b>QUERY:</b> {search_clean}\n"
-    cap += f"▸ <b>RESULTS:</b> {len(titles)} GROUPS FOUND\n\n"
+    cap += f"▸ <b>RESULTS:</b> {len(titles)} MATCHES FOUND\n\n"
     cap += "<i>SELECT AN ITEM TO VIEW DETAILS ↓</i>"
 
     await m.delete()
@@ -238,7 +264,6 @@ async def swatch_cb(client, query):
         files_data = grouped_titles[selected_title]["files"]
         total_eps = len(files_data)
         
-        # 🔥 FLOAT SORTING: Ch 225.5 comes exactly after 225
         files_data.sort(key=lambda x: safe_float(x[1]))
         current_chunk = files_data[offset:offset+30]
         
@@ -266,7 +291,6 @@ async def swatch_cb(client, query):
         if total_eps > offset + 30: page_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"swatch#{key}#{index}#{offset+30}"))
         if page_row: btn.append(page_row)
         
-        # 🔥 DOWNLOAD ALL BUTTON ADDED HERE IN THE GRID 🔥
         down_grid_btn = "📥 DOWNLOAD ALL CHAPTERS" if cat == "manga" else "📥 DOWNLOAD ALL EPISODES"
         btn.append([InlineKeyboardButton(down_grid_btn, callback_data=f"downall#{key}#{index}#{offset}")])
             
@@ -291,7 +315,7 @@ async def back_to_search(client, query):
         btn.append([InlineKeyboardButton(label, callback_data=f"stitle#{key}#{i}")])
         
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
-    cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n▸ <b>RESULTS:</b> {len(titles)} GROUPS\n\n<i>SELECT AN ITEM TO VIEW DETAILS ↓</i>"
+    cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n▸ <b>RESULTS:</b> {len(titles)} MATCHES\n\n<i>SELECT AN ITEM TO VIEW DETAILS ↓</i>"
 
     await query.message.edit_media(InputMediaPhoto(media=SEARCH_BANNER, caption=cap))
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btn))
@@ -351,4 +375,3 @@ async def remwatch_cb(bot, query):
     new_btn = list(query.message.reply_markup.inline_keyboard)
     new_btn[1] = [InlineKeyboardButton(btn_txt, callback_data=f"addwatch#{title}#{cat}")]
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_btn))
-    
