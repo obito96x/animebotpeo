@@ -16,12 +16,45 @@ if not hasattr(temp, 'SEARCHES'): temp.SEARCHES = {}
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 DEF_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 
-async def auto_delete_task(messages, timer):
-    await asyncio.sleep(timer)
-    for msg in messages:
+# =========================================
+# ⏱️ VIP AUTO DELETE LOGIC
+# =========================================
+def convert_time(duration_seconds: int) -> str:
+    periods = [('Yᴇᴀʀ', 31536000), ('Mᴏɴᴛʜ', 2592000), ('Dᴀʏ', 86400), ('Hᴏᴜʀ', 3600), ('Mɪɴᴜᴛᴇ', 60), ('Sᴇᴄᴏɴᴅ', 1)]
+    parts = []
+    for period_name, period_seconds in periods:
+        if duration_seconds >= period_seconds:
+            num_periods = duration_seconds // period_seconds
+            duration_seconds %= period_seconds
+            parts.append(f"{num_periods} {period_name}{'s' if num_periods > 1 else ''}")
+    if len(parts) == 0: return "0 Sᴇᴄᴏɴᴅ"
+    elif len(parts) == 1: return parts[0]
+    else: return ', '.join(parts[:-1]) +' ᴀɴᴅ '+ parts[-1]
+
+DEL_MSG = """<b>⚠️ Dᴜᴇ ᴛᴏ Cᴏᴘʏʀɪɢʜᴛ ɪssᴜᴇs....
+<blockquote>Yᴏᴜʀ ғɪʟᴇs ᴡɪʟʟ ʙᴇ ᴅᴇʟᴇᴛᴇᴅ ᴡɪᴛʜɪɴ <a href="https://t.me/{username}">{time}</a>. Sᴏ ᴘʟᴇᴀsᴇ ғᴏʀᴡᴀʀᴅ ᴛʜᴇᴍ ᴛᴏ ᴀɴʏ ᴏᴛʜᴇʀ ᴘʟᴀᴄᴇ ғᴏʀ ғᴜᴛᴜʀᴇ ᴀᴠᴀɪʟᴀʙɪʟɪᴛʏ.</blockquote></b>"""
+
+async def auto_del_notification(client, msg_chat_id, messages, delay_time, transfer=None):
+    bot_me = await client.get_me()
+    bot_username = bot_me.username
+    temp_msg = await client.send_message(msg_chat_id, DEL_MSG.format(username=bot_username, time=convert_time(delay_time)), disable_web_page_preview=True)
+    
+    await asyncio.sleep(delay_time)
+    
+    for m in messages:
         try:
-            if msg: await msg.delete()
+            if m: await m.delete()
         except: pass
+        
+    try:
+        if transfer:
+            name = "♻️ Cʟɪᴄᴋ Hᴇʀᴇ"
+            link = f"https://t.me/{bot_username}?start={transfer}"
+            button = [[InlineKeyboardButton(text=name, url=link), InlineKeyboardButton(text="Cʟᴏsᴇ ✖️", callback_data="close_data")]]
+            await temp_msg.edit_text(text=f"<b>Pʀᴇᴠɪᴏᴜs Mᴇssᴀɢᴇ ᴡᴀs Dᴇʟᴇᴛᴇᴅ 🗑\n<blockquote>Iғ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ɢᴇᴛ ᴛʜᴇ ғɪʟᴇs ᴀɢᴀɪɴ, ᴛʜᴇɴ ᴄʟɪᴄᴋ: [<a href='{link}'>{name}</a>] ʙᴜᴛᴛᴏɴ ʙᴇʟᴏᴡ ᴇʟsᴇ ᴄʟᴏsᴇ ᴛʜɪs ᴍᴇssᴀɢᴇ.</blockquote></b>", reply_markup=InlineKeyboardMarkup(button), disable_web_page_preview=True)
+        else:
+            await temp_msg.edit_text("<b><blockquote>Pʀᴇᴠɪᴏᴜs Mᴇssᴀɢᴇ ᴡᴀs Dᴇʟᴇᴛᴇᴅ 🗑</blockquote></b>")
+    except Exception: pass
 
 # ==========================================
 # 🧠 GOD-LEVEL CLEANER & SMART MATCHER
@@ -52,15 +85,11 @@ def is_similar(t1, t2):
     stop_words = {'the', 'a', 'an', 'of', 'and', 'in', 'to', 'with', 'for', 'is', 'at', 'on', 'part'}
     w1 = [x for x in re.sub(r'[^a-z0-9\s]', '', t1.lower()).split() if x not in stop_words]
     w2 = [x for x in re.sub(r'[^a-z0-9\s]', '', t2.lower()).split() if x not in stop_words]
-    
     if not w1 or not w2: return False
-    
     s1, s2 = set(w1), set(w2)
     intersection = s1.intersection(s2)
-    
     if min(len(s1), len(s2)) == 0: return False
-    match_ratio = len(intersection) / min(len(s1), len(s2))
-    return match_ratio > 0.50
+    return (len(intersection) / min(len(s1), len(s2))) > 0.50
 
 def get_emoji(filename):
     ext = filename.split('.')[-1].lower() if '.' in filename else ''
@@ -70,7 +99,7 @@ def get_emoji(filename):
     return '📙'
 
 # ==========================================
-# 🌐 ANILIST 16:9 COVER (ENGLISH NAMES)
+# 🌐 ANILIST 16:9 COVER
 # ==========================================
 async def fetch_anilist_16x9(query, category="anime"):
     url = "https://graphql.anilist.co"
@@ -85,7 +114,7 @@ async def fetch_anilist_16x9(query, category="anime"):
     return None
 
 # ==========================================
-# 🔍 AUTO FILTER (10% BROAD MATCH LOGIC)
+# 🔍 AUTO FILTER (10% BROAD MATCH)
 # ==========================================
 async def auto_filter(client, msg, req_cat=None):
     search = msg.text.lower()
@@ -104,11 +133,9 @@ async def auto_filter(client, msg, req_cat=None):
     
     cursor1 = Media.find(query)
     cursor2 = Media2.find(query)
-    
     files = await cursor1.to_list(length=3000) + await cursor2.to_list(length=3000)
     
-    if not files: 
-        return await m.edit("<b>❌ No Anime/Manga found with this name. Try a different word!</b>")
+    if not files: return await m.edit("<b>❌ No Anime/Manga found with this name. Try a different word!</b>")
 
     key = f"{msg.chat.id}-{msg.id}"
     grouped_titles = {}
@@ -119,7 +146,6 @@ async def auto_filter(client, msg, req_cat=None):
         cat = "manga" if is_manga else "anime"
         
         if req_cat and cat != req_cat: continue
-            
         try: ep_val = float(ep) if '.' in ep else int(ep)
         except: ep_val = 0
             
@@ -151,14 +177,12 @@ async def auto_filter(client, msg, req_cat=None):
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
     
     cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n▸ <b>QUERY:</b> {search_clean}\n▸ <b>RESULTS:</b> {len(titles)} MATCHES FOUND\n\n<i>SELECT AN ITEM TO VIEW DETAILS ↓</i>"
-
-    # 🔥 Random Search Picture implementation
     pic = await get_random_pic('search', DEF_BANNER)
     await m.delete()
     await msg.reply_photo(photo=pic, caption=cap, reply_markup=InlineKeyboardMarkup(btn))
 
 # ==========================================
-# 📺 STEP 2 & 3: DETAILS & GRID UI
+# 📺 DETAILS & GRID UI
 # ==========================================
 def safe_float(val):
     try: return float(val)
@@ -197,7 +221,6 @@ async def select_title_cb(client, query):
             [InlineKeyboardButton("📁 ADD TO LIBRARY" if cat == "manga" else "⭐ ADD TO WATCHLIST", callback_data=f"addwatch#{safe_title}#{cat}")],
             [InlineKeyboardButton("🔙 BACK", callback_data=f"sback#{key}"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")]
         ]
-        
         await query.message.edit_media(InputMediaPhoto(media=cover, caption=cap))
         await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btn))
     except Exception as e:
@@ -243,11 +266,11 @@ async def swatch_cb(client, query):
         btn.append([InlineKeyboardButton("📥 DOWNLOAD ALL CHAPTERS" if cat == "manga" else "📥 DOWNLOAD ALL EPISODES", callback_data=f"downall#{key}#{index}#{offset}")])
         btn.append([InlineKeyboardButton("🔙 BACK", callback_data=f"stitle#{key}#{index}"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
         await query.message.edit_caption(caption=cap, reply_markup=InlineKeyboardMarkup(btn))
-    except Exception as e:
+    except Exception:
         await query.answer("❌ Error processing grid.", show_alert=True)
 
 # ==========================================
-# 🔙 BACK & DOWNLOAD ALL (TIMER + STICKER)
+# 🔙 DOWNLOAD ALL BATCH (WITH AUTO DELETE)
 # ==========================================
 @Client.on_callback_query(filters.regex(r"^sback#"))
 async def back_to_search(client, query):
@@ -264,7 +287,6 @@ async def back_to_search(client, query):
         
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
     cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n▸ <b>RESULTS:</b> {len(titles)} MATCHES\n\n<i>SELECT AN ITEM TO VIEW DETAILS ↓</i>"
-
     pic = await get_random_pic('search', DEF_BANNER)
     await query.message.edit_media(InputMediaPhoto(media=pic, caption=cap))
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btn))
@@ -301,17 +323,18 @@ async def downall_cb(bot, query):
             sent_msgs.append(m)
         except Exception: pass
         
-    # 🔥 STICKER AND AUTO-DELETE LOGIC FOR BATCH 🔥
+    # 🔥 STICKER AND VIP AUTO-DELETE BATCH
     timer = await get_autodelete_time()
     stk_id = await get_sticker()
-    stk_msg, warn_msg = None, None
     
     if stk_id and sent_msgs:
-        stk_msg = await bot.send_sticker(query.from_user.id, stk_id)
+        s_msg = await bot.send_sticker(query.from_user.id, stk_id)
+        sent_msgs.append(s_msg)
         
     if timer > 0 and sent_msgs:
-        warn_msg = await bot.send_message(query.from_user.id, f"⚠️ **Note:** Above files will be automatically deleted in {timer//60} minutes to prevent copyright issues!")
-        asyncio.create_task(auto_delete_task(sent_msgs + [stk_msg, warn_msg], timer))
+        # Pura search re-trigger karne ke liye deep link pass karte hain
+        search_link = f"getfile-{selected_title.replace(' ', '-')}"
+        asyncio.create_task(auto_del_notification(bot, query.from_user.id, sent_msgs, timer, transfer=search_link))
 
 @Client.on_callback_query(filters.regex(r"^close_data$"))
 async def close_cb(bot, query):
