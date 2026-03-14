@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 
+# 🔥 ROCK-SOLID PICS ARRAY
 PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
 
 # =========================================
@@ -96,7 +97,6 @@ async def start(client, message):
     if len(message.command) > 1:
         data = message.command[1]
         
-        # 🔥 SINGLE FILE FIX: Fetching short UUID from Cache
         if data.startswith('file_'):
             short_id = data.split('_', 1)[1]
             if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
@@ -124,7 +124,6 @@ async def start(client, message):
             except Exception as e: await message.reply_text(f"<b>❌ Error searching:</b> {e}")
             return
             
-        # 🟢 BATCH FILES HANDLING + VIP AUTO DELETE
         if data.startswith("BATCH"):
             sts = await message.reply("<b>Please wait...⏳</b>")
             file_id = data.split("-", 1)[1]
@@ -192,7 +191,7 @@ async def set_sticker_cmd(client, message):
         await message.reply("⚠️ **Usage:** Reply to a sticker with `/set_sticker` to set it.\nUse `/set_sticker off` to disable.")
 
 # =========================================
-# 🔠 A-Z ALPHABETICAL INDEX CALLBACKS
+# 🔠 A-Z ALPHABETICAL INDEX CALLBACKS (FIXED)
 # =========================================
 @Client.on_callback_query(filters.regex(r"^browse_(anime|manga)$"))
 async def browse_callback(client, query):
@@ -213,25 +212,38 @@ async def browse_callback(client, query):
 async def show_letter_results(client, query):
     _, category, letter = query.data.split("_")
     await query.answer("Fetching titles... ⏳", show_alert=False)
-    regex_pattern = r"^[0-9]" if letter == "num" else f"^{letter}"
-    cursor1 = Media.find({"file_name": {"$regex": regex_pattern, "$options": "i"}, "category": category})
-    cursor2 = Media2.find({"file_name": {"$regex": regex_pattern, "$options": "i"}, "category": category})
-    files = await cursor1.to_list(length=300) + await cursor2.to_list(length=300)
     
-    if not files: return await query.message.edit_caption(caption=f"<b>❌ No files found starting with '{letter}'</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]))
-    names = set()
-    for f in files:
-        clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', f.file_name)
-        clean_name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr)$', '', clean_name, flags=re.IGNORECASE)
-        clean_name = re.split(r'\s-\s|\sEp\s|\sE\d', clean_name)[0].replace(".", " ").replace("_", " ").strip()
-        if clean_name and (letter == "num" or clean_name.upper().startswith(letter)): names.add(clean_name)
+    # Check directly in the beautifully cleaned 'clean_title' field
+    regex_pattern = r"^[0-9]" if letter == "num" else f"^{letter}"
+    query_filter = {"clean_title": {"$regex": regex_pattern, "$options": "i"}, "category": category}
+    
+    # Fast database lookup using distinct
+    titles1 = await Media.collection.distinct("clean_title", query_filter)
+    titles2 = await Media2.collection.distinct("clean_title", query_filter)
+    
+    # Merge, remove unknown/empty, and sort
+    all_titles = list(set(titles1 + titles2))
+    all_titles = [t for t in all_titles if t and t != "Unknown"]
+    all_titles.sort()
+    
+    if not all_titles: 
+        return await query.message.edit_caption(
+            caption=f"<b>❌ No {category} found starting with '{letter}'</b>", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]])
+        )
             
-    text = f"<b>📁 Available titles starting with '{letter}'</b>\n\n"
+    text = f"<b>📁 Available {category.capitalize()} starting with '{letter}'</b>\n\n"
     bot_username = client.me.username if client.me else temp.U_NAME
-    for name in sorted(names)[:60]:
+    
+    for name in all_titles[:60]:
         safe_link = name.replace(" ", "-")
         text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>{name}</a>\n"
-    await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]), disable_web_page_preview=True)
+        
+    await query.message.edit_caption(
+        caption=text, 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]), 
+        disable_web_page_preview=True
+    )
 
 # =========================================
 # 🔍 HELP & REQUEST COMMANDS
@@ -258,7 +270,7 @@ async def request_cmd(client, message):
     except Exception: await message.reply(f"✅ Request logged: **{req_name}**")
 
 # ==========================================
-# ⭐ WATCHLIST & LIBRARY
+# ⭐ WATCHLIST & LIBRARY (FIXED)
 # ==========================================
 @Client.on_message(filters.command("watchlist"))
 async def watchlist_cmd(client, message):
@@ -278,7 +290,11 @@ async def watchlist_cmd(client, message):
             text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
         
         pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
-        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+        await message.reply_photo(
+            photo=pic, 
+            caption=text, 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]])
+        )
     except Exception as e:
         logger.error(f"Watchlist Error: {e}")
         await message.reply("❌ Error fetching Watchlist. Please try again.")
@@ -301,7 +317,11 @@ async def library_cmd(client, message):
             text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
             
         pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
-        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+        await message.reply_photo(
+            photo=pic, 
+            caption=text, 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]])
+        )
     except Exception as e:
         logger.error(f"Library Error: {e}")
         await message.reply("❌ Error fetching Library. Please try again.")
