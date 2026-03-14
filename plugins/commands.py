@@ -1,8 +1,7 @@
-import os, json, logging, asyncio, string, aiohttp, datetime
+import os, json, logging, asyncio, string, aiohttp, datetime, uuid, random
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
-import random
 
 from database.watchlist_db import get_watchlist, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker
 from database.ia_filterdb import Media, Media2
@@ -16,7 +15,6 @@ logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 
-# 🔥 ROCK-SOLID PICS ARRAY
 PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
 
 # =========================================
@@ -34,8 +32,7 @@ def convert_time(duration_seconds: int) -> str:
     elif len(parts) == 1: return parts[0]
     else: return ', '.join(parts[:-1]) +' ᴀɴᴅ '+ parts[-1]
 
-DEL_MSG = """<b>⚠️ Dᴜᴇ ᴛᴏ Cᴏᴘʏʀɪɢʜᴛ ɪssᴜᴇs....
-<blockquote>Yᴏᴜʀ ғɪʟᴇs ᴡɪʟʟ ʙᴇ ᴅᴇʟᴇᴛᴇᴅ ᴡɪᴛʜɪɴ <a href="https://t.me/{username}">{time}</a>. Sᴏ ᴘʟᴇᴀsᴇ ғᴏʀᴡᴀʀᴅ ᴛʜᴇᴍ ᴛᴏ ᴀɴʏ ᴏᴛʜᴇʀ ᴘʟᴀᴄᴇ ғᴏʀ ғᴜᴛᴜʀᴇ ᴀᴠᴀɪʟᴀʙɪʟɪᴛʏ.</blockquote></b>"""
+DEL_MSG = "<b>⚠️ Dᴜᴇ ᴛᴏ Cᴏᴘʏʀɪɢʜᴛ ɪssᴜᴇs....\n<blockquote>Yᴏᴜʀ ғɪʟᴇs ᴡɪʟʟ ʙᴇ ᴅᴇʟᴇᴛᴇᴅ ᴡɪᴛʜɪɴ <a href='https://t.me/{username}'>{time}</a>. Sᴏ ᴘʟᴇᴀsᴇ ғᴏʀᴡᴀʀᴅ ᴛʜᴇᴍ ᴛᴏ ᴀɴʏ ᴏᴛʜᴇʀ ᴘʟᴀᴄᴇ ғᴏʀ ғᴜᴛᴜʀᴇ ᴀᴠᴀɪʟᴀʙɪʟɪᴛʏ.</blockquote></b>"
 
 async def auto_del_notification(client, msg_chat_id, messages, delay_time, transfer=None):
     bot_me = await client.get_me()
@@ -99,7 +96,6 @@ async def start(client, message):
     if len(message.command) > 1:
         data = message.command[1]
         
-        # 🔥 SINGLE FILE FIX: Fetching short UUID from Cache
         if data.startswith('file_'):
             short_id = data.split('_', 1)[1]
             if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
@@ -127,7 +123,6 @@ async def start(client, message):
             except Exception as e: await message.reply_text(f"<b>❌ Error searching:</b> {e}")
             return
             
-        # 🟢 BATCH FILES HANDLING + VIP AUTO DELETE
         if data.startswith("BATCH"):
             sts = await message.reply("<b>Please wait...⏳</b>")
             file_id = data.split("-", 1)[1]
@@ -336,8 +331,43 @@ async def ongoing_anime_cb(client, query):
     await query.answer(f"Fetching {day} schedule...", show_alert=False)
     start_ts, end_ts = get_day_timestamps(day)
     
-    graphql_query = '''
-    query($start: Int, $end: Int) { 
-        Page(page: 1, perPage: 15) { 
-            airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { 
-                episode
+    graphql_query = "query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { english romaji } } } } }"
+    data = await fetch_anilist_data(graphql_query, {"start": start_ts, "end": end_ts})
+    
+    if not data or 'data' not in data:
+        return await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption="❌ Failed to fetch schedule."))
+        
+    schedule_list = data['data']['Page']['airingSchedules']
+    text = f"📅 **Anime Airing on {day}:**\n\n"
+    if not schedule_list: text += "❌ No major anime scheduled for this day."
+    else:
+        for item in schedule_list:
+            t = item['media']['title']
+            title = t.get('english') or t.get('romaji')
+            text += f"⏰ **{title}** - Episode {item['episode']}\n"
+            
+    await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption=text))
+    await query.message.edit_reply_markup(reply_markup=get_ongoing_keyboard("anime"))
+
+@Client.on_callback_query(filters.regex(r"^ongoing_manga_"))
+async def ongoing_manga_cb(client, query):
+    day = query.data.split("_")[-1]
+    await query.answer(f"Fetching {day} manga...", show_alert=False)
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    page_num = days.index(day) + 1 
+    
+    graphql_query = "query($page: Int) { Page(page: $page, perPage: 15) { media(status: RELEASING, type: MANGA, sort: POPULARITY_DESC) { title { english romaji } chapters } } }"
+    data = await fetch_anilist_data(graphql_query, {"page": page_num})
+    
+    if not data or 'data' not in data:
+        return await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption="❌ Failed to fetch data."))
+        
+    manga_list = data['data']['Page']['media']
+    text = f"📚 **Top Releasing Manga (Page {page_num} - {day}):**\n\n"
+    for manga in manga_list:
+        t = manga['title']
+        title = t.get('english') or t.get('romaji')
+        text += f"📖 **{title}** (Ch: {manga.get('chapters') or '?'})\n"
+        
+    await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption=text))
+    await query.message.edit_reply_markup(reply_markup=get_ongoing_keyboard("manga"))
