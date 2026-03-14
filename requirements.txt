@@ -3,16 +3,17 @@ aiofiles
 aiohttp
 bs4
 colorama
+datetime
 dnspython==2.3.0
 ffmpeg-python>=0.2.0
-httpx
+httpx[http2]
 jinja2
 marshmallow==3.26.1
 motor==3.7.0
-numpy
+numPy
 pillow==9.4.0
 psutil==5.9.4
-pymongo==4.11.1
+pymongo[srv]==4.11.1
 python-decouple
 python-dotenv==0.21.1
 pyshorteners
@@ -20,7 +21,7 @@ pyromod
 pytz
 requests
 shortzy
-speedtest-cli
+speedtest
 tgcrypto
 ujson
 wget
@@ -31,23 +32,22 @@ humanize
 # Master Dependencies
 PyLeaves==1.0.2
 Telethroid==0.0.10
-wikipedia-api
-pyrofork==2.3.45
+Wikipedia
+
 # Pyrogram Fork
-# YouTube Downloading
+pyrofork==2.3.45
+ffmpeg
+youtube-dl
 youtube-search-python==1.4.6
 youtube_search
 yt-dlp
 ytthumb
-
-# Instaloader & Similarity Matching
 fuzzywuzzy
 instaloader==4.9.5
 python-Levenshtein
-
-# AI Tools
+bard
 beautifulsoup4
-google-generativeai==0.7.2
+google-generativeai
 googletrans==3.1.0a0
 gtts==2.3.1
 lexica-api
@@ -55,11 +55,7 @@ MukeshAPI
 qrcode
 textblob
 langdetect 
-
-# Git-based Packages
 git+https://github.com/Joelkb/cinemagoer
-
-# Other Tools
 apscheduler
 opencv-python-headless==4.8.1.78
 telegraph==2.2.0
