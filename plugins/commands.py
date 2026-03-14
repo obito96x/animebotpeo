@@ -20,7 +20,7 @@ OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
 
 # =========================================
-# ⏱️ VIP AUTO DELETE LOGIC (YOUR EXACT SNIPPET)
+# ⏱️ VIP AUTO DELETE LOGIC
 # =========================================
 def convert_time(duration_seconds: int) -> str:
     periods = [('Yᴇᴀʀ', 31536000), ('Mᴏɴᴛʜ', 2592000), ('Dᴀʏ', 86400), ('Hᴏᴜʀ', 3600), ('Mɪɴᴜᴛᴇ', 60), ('Sᴇᴄᴏɴᴅ', 1)]
@@ -335,4 +335,9 @@ async def ongoing_anime_cb(client, query):
     day = query.data.split("_")[-1]
     await query.answer(f"Fetching {day} schedule...", show_alert=False)
     start_ts, end_ts = get_day_timestamps(day)
-    graphql_query = '''query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { english rom
+    
+    graphql_query = '''
+    query($start: Int, $end: Int) { 
+        Page(page: 1, perPage: 15) { 
+            airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { 
+                episode
