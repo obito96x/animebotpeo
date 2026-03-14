@@ -3,17 +3,16 @@ aiofiles
 aiohttp
 bs4
 colorama
-datetime
 dnspython==2.3.0
 ffmpeg-python>=0.2.0
-httpx[http2]
+httpx
 jinja2
 marshmallow==3.26.1
 motor==3.7.0
-numPy
+numpy
 pillow==9.4.0
 psutil==5.9.4
-pymongo[srv]==4.11.1
+pymongo==4.11.1
 python-decouple
 python-dotenv==0.21.1
 pyshorteners
@@ -21,7 +20,7 @@ pyromod
 pytz
 requests
 shortzy
-speedtest
+speedtest-cli
 tgcrypto
 ujson
 wget
@@ -32,14 +31,12 @@ humanize
 # Master Dependencies
 PyLeaves==1.0.2
 Telethroid==0.0.10
-Wikipedia
+wikipedia
 
 # Pyrogram Fork
 pyrofork==2.3.45
 
 # YouTube Downloading
-ffmpeg
-youtube-dl
 youtube-search-python==1.4.6
 youtube_search
 yt-dlp
@@ -51,9 +48,8 @@ instaloader==4.9.5
 python-Levenshtein
 
 # AI Tools
-bard
 beautifulsoup4
-google-generativeai
+google-generativeai==0.7.2
 googletrans==3.1.0a0
 gtts==2.3.1
 lexica-api
