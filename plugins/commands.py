@@ -2,9 +2,11 @@ import os, json, logging, asyncio, string, aiohttp, datetime
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+import random
 
-from database.watchlist_db import get_watchlist, get_random_pic, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker, add_pic, remove_pic, get_all_pics
+from database.watchlist_db import get_watchlist, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker
 from database.ia_filterdb import Media, Media2
+from database.users_chats_db import db
 from plugins.pmfilter import auto_filter 
 from info import *
 from utils import temp
@@ -12,12 +14,13 @@ from utils import temp
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
-
-DEF_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 
+# 🔥 ROCK-SOLID PICS ARRAY
+PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
+
 # =========================================
-# ⏱️ VIP AUTO DELETE LOGIC (From Your Snippet)
+# ⏱️ VIP AUTO DELETE LOGIC (YOUR EXACT SNIPPET)
 # =========================================
 def convert_time(duration_seconds: int) -> str:
     periods = [('Yᴇᴀʀ', 31536000), ('Mᴏɴᴛʜ', 2592000), ('Dᴀʏ', 86400), ('Hᴏᴜʀ', 3600), ('Mɪɴᴜᴛᴇ', 60), ('Sᴇᴄᴏɴᴅ', 1)]
@@ -54,7 +57,7 @@ async def auto_del_notification(client, msg_chat_id, messages, delay_time, trans
             await temp_msg.edit_text(text=f"<b>Pʀᴇᴠɪᴏᴜs Mᴇssᴀɢᴇ ᴡᴀs Dᴇʟᴇᴛᴇᴅ 🗑\n<blockquote>Iғ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ɢᴇᴛ ᴛʜᴇ ғɪʟᴇs ᴀɢᴀɪɴ, ᴛʜᴇɴ ᴄʟɪᴄᴋ: [<a href='{link}'>{name}</a>] ʙᴜᴛᴛᴏɴ ʙᴇʟᴏᴡ ᴇʟsᴇ ᴄʟᴏsᴇ ᴛʜɪs ᴍᴇssᴀɢᴇ.</blockquote></b>", reply_markup=InlineKeyboardMarkup(button), disable_web_page_preview=True)
         else:
             await temp_msg.edit_text("<b><blockquote>Pʀᴇᴠɪᴏᴜs Mᴇssᴀɢᴇ ᴡᴀs Dᴇʟᴇᴛᴇᴅ 🗑</blockquote></b>")
-    except Exception as e: pass
+    except Exception: pass
 
 # =========================================
 # 🚀 SEARCH CATEGORY ROUTERS
@@ -81,7 +84,7 @@ async def search_manga(client, message):
     except Exception as e: await message.reply_text(f"<b>❌ Error:</b> {e}")
 
 # =========================================
-# 🚀 START COMMAND & FILE DELIVERY
+# 🚀 START COMMAND & FILE DELIVERY FIX
 # =========================================
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
@@ -96,9 +99,15 @@ async def start(client, message):
     if len(message.command) > 1:
         data = message.command[1]
         
-        # 🟢 SINGLE FILE HANDLING + VIP AUTO DELETE
+        # 🔥 SINGLE FILE FIX: Fetching short UUID from Cache
         if data.startswith('file_'):
-            file_id = data.split('_', 1)[1]
+            short_id = data.split('_', 1)[1]
+            if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
+            file_id = temp.FILES_CACHE.get(short_id)
+            
+            if not file_id:
+                return await message.reply("<b>❌ Link Expired!</b> Please search for the Anime/Manga again to get a fresh link.")
+                
             try:
                 sent_msg = await client.send_cached_media(chat_id=message.from_user.id, file_id=file_id)
                 timer = await get_autodelete_time()
@@ -107,8 +116,8 @@ async def start(client, message):
                 if stk_id: stk_msg = await client.send_sticker(message.from_user.id, stk_id)
                 
                 if timer > 0:
-                    asyncio.create_task(auto_del_notification(client, message.from_user.id, [sent_msg, stk_msg], timer, transfer=f"file_{file_id}"))
-            except Exception as e:
+                    asyncio.create_task(auto_del_notification(client, message.from_user.id, [sent_msg, stk_msg], timer, transfer=f"file_{short_id}"))
+            except Exception:
                 await message.reply(f"❌ Error sending file.")
             return
 
@@ -152,17 +161,15 @@ async def start(client, message):
             return
 
     # NORMAL START MENU
-    pic = await get_random_pic('start', DEF_BANNER)
     text = f"**Welcome to the Ultimate Anime & Manga Downloader, {message.from_user.first_name}! 🌟**"
     buttons = InlineKeyboardMarkup([[InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"), InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")], [InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""), InlineKeyboardButton("🆘 Help Guide", callback_data="help")]])
-    await message.reply_photo(photo=pic, caption=text, reply_markup=buttons)
+    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=buttons)
 
 @Client.on_callback_query(filters.regex(r"^start$"))
 async def start_cb(client, query):
-    pic = await get_random_pic('start', DEF_BANNER)
     text = f"**Welcome to the Ultimate Anime & Manga Downloader, {query.from_user.first_name}! 🌟**"
     buttons = InlineKeyboardMarkup([[InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"), InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")], [InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""), InlineKeyboardButton("🆘 Help Guide", callback_data="help")]])
-    await query.message.edit_media(InputMediaPhoto(media=pic, caption=text))
+    await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption=text))
     await query.message.edit_reply_markup(reply_markup=buttons)
 
 # =========================================
@@ -186,73 +193,6 @@ async def set_sticker_cmd(client, message):
         await message.reply("✅ Sticker disabled.")
     else:
         await message.reply("⚠️ **Usage:** Reply to a sticker with `/set_sticker` to set it.\nUse `/set_sticker off` to disable.")
-
-# =========================================
-# 🖼️ PICTURE MANAGEMENT UI (/pic)
-# =========================================
-@Client.on_message(filters.command("pic") & filters.user(ADMINS))
-async def pic_manager(client, message):
-    btn = [
-        [InlineKeyboardButton("🚀 Start Pic", callback_data="pic_cat_start"), InlineKeyboardButton("🆘 Help Pic", callback_data="pic_cat_help")],
-        [InlineKeyboardButton("🔍 Search Pic", callback_data="pic_cat_search"), InlineKeyboardButton("📅 Schedule Pics", callback_data="pic_menu_schedule")],
-        [InlineKeyboardButton("❌ Close", callback_data="close_data")]
-    ]
-    await message.reply("<b>🖼️ Bot Picture Management</b>\n\nSelect a category to manage images:", reply_markup=InlineKeyboardMarkup(btn))
-
-@Client.on_callback_query(filters.regex(r"^pic_menu_schedule$") & filters.user(ADMINS))
-async def pic_schedule_menu(client, query):
-    btn = [
-        [InlineKeyboardButton("Main Schedule Menu", callback_data="pic_cat_schedule")],
-        [InlineKeyboardButton("Monday", callback_data="pic_cat_monday"), InlineKeyboardButton("Tuesday", callback_data="pic_cat_tuesday")],
-        [InlineKeyboardButton("Wednesday", callback_data="pic_cat_wednesday"), InlineKeyboardButton("Thursday", callback_data="pic_cat_thursday")],
-        [InlineKeyboardButton("Friday", callback_data="pic_cat_friday"), InlineKeyboardButton("Saturday", callback_data="pic_cat_saturday")],
-        [InlineKeyboardButton("Sunday", callback_data="pic_cat_sunday")],
-        [InlineKeyboardButton("🔙 Back", callback_data="pic_main_menu")]
-    ]
-    await query.message.edit_text("<b>📅 Schedule Picture Management</b>\n\nSelect a day to set specific pictures:", reply_markup=InlineKeyboardMarkup(btn))
-
-@Client.on_callback_query(filters.regex(r"^pic_main_menu$") & filters.user(ADMINS))
-async def pic_main_menu(client, query):
-    btn = [
-        [InlineKeyboardButton("🚀 Start Pic", callback_data="pic_cat_start"), InlineKeyboardButton("🆘 Help Pic", callback_data="pic_cat_help")],
-        [InlineKeyboardButton("🔍 Search Pic", callback_data="pic_cat_search"), InlineKeyboardButton("📅 Schedule Pics", callback_data="pic_menu_schedule")],
-        [InlineKeyboardButton("❌ Close", callback_data="close_data")]
-    ]
-    await query.message.edit_text("<b>🖼️ Bot Picture Management</b>\n\nSelect a category to manage images:", reply_markup=InlineKeyboardMarkup(btn))
-
-@Client.on_callback_query(filters.regex(r"^pic_cat_") & filters.user(ADMINS))
-async def pic_manage_category(client, query):
-    cat = query.data.replace("pic_cat_", "")
-    pics = await get_all_pics(cat)
-    text = f"<b>🖼️ Category: {cat.replace('_', ' ').title()}</b>\n\nTotal Images currently active: <b>{len(pics)}</b>\n\nChoose an action below:"
-    btn = [[InlineKeyboardButton("➕ Add Image", callback_data=f"pic_add_{cat}")], [InlineKeyboardButton("➖ Remove Image", callback_data=f"pic_rem_{cat}")], [InlineKeyboardButton("🔙 Back", callback_data="pic_main_menu")]]
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(btn))
-
-@Client.on_callback_query(filters.regex(r"^pic_add_") & filters.user(ADMINS))
-async def add_pic_process(client, query):
-    cat = query.data.replace("pic_add_", "")
-    try:
-        set_msg = await client.ask(chat_id=query.from_user.id, text=f"<b>Send me the direct Image URL (Telegra.ph or similar) to add for <code>{cat}</code></b>\n\n<i>Time limit: 60s</i>", timeout=60)
-        url = set_msg.text.strip()
-        if not url.startswith("http"): return await set_msg.reply("❌ Invalid URL!")
-        await add_pic(cat, url)
-        await set_msg.reply(f"✅ Image successfully added to <b>{cat}</b>!\nSend `/pic` to manage more.")
-    except Exception:
-        await client.send_message(query.from_user.id, "❌ Request Timeout.")
-
-@Client.on_callback_query(filters.regex(r"^pic_rem_") & filters.user(ADMINS))
-async def rem_pic_process(client, query):
-    cat = query.data.replace("pic_rem_", "")
-    pics = await get_all_pics(cat)
-    if not pics: return await query.answer("❌ No images in this category to remove!", show_alert=True)
-    text = f"<b>Images in {cat}:</b>\n\n"
-    for i, p in enumerate(pics, 1): text += f"{i}. <a href='{p}'>Image {i}</a>\n"
-    try:
-        set_msg = await client.ask(chat_id=query.from_user.id, text=text + "\n<b>Send the Exact URL from above that you want to delete.</b>", timeout=60, disable_web_page_preview=True)
-        await remove_pic(cat, set_msg.text.strip())
-        await set_msg.reply(f"✅ Image removed from <b>{cat}</b>!\nSend `/pic` to manage more.")
-    except Exception:
-        await client.send_message(query.from_user.id, "❌ Request Timeout.")
 
 # =========================================
 # 🔠 A-Z ALPHABETICAL INDEX CALLBACKS
@@ -301,15 +241,13 @@ async def show_letter_results(client, query):
 # =========================================
 @Client.on_message(filters.command("help"))
 async def help_cmd(client, message):
-    pic = await get_random_pic('help', DEF_BANNER)
     text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/ongoing_manga` — Airing Manga\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/todayschedule` — Today's schedule\n➤ `/request <name>` — Request add"
-    await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
+    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
 
 @Client.on_callback_query(filters.regex(r"^help$"))
 async def help_cb(client, query):
-    pic = await get_random_pic('help', DEF_BANNER)
     text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/ongoing_manga` — Airing Manga\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/todayschedule` — Today's schedule\n➤ `/request <name>` — Request add"
-    await query.message.edit_media(InputMediaPhoto(media=pic, caption=text))
+    await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption=text))
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="start")]]))
 
 @Client.on_message(filters.command("request") & filters.private)
@@ -335,8 +273,7 @@ async def watchlist_cmd(client, message):
     for item in saved_anime:
         safe_link = item['title'].replace(" ", "-")
         text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{item['title']}**</a>\n\n"
-    pic = await get_random_pic('start', DEF_BANNER)
-    await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
 
 @Client.on_message(filters.command(["library", "readlist"]))
 async def library_cmd(client, message):
@@ -348,8 +285,7 @@ async def library_cmd(client, message):
     for item in saved_manga:
         safe_link = item['title'].replace(" ", "-")
         text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{item['title']}**</a>\n\n"
-    pic = await get_random_pic('start', DEF_BANNER)
-    await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
 
 # ==========================================
 # 📅 ONGOING 7-DAYS UI 
@@ -386,59 +322,17 @@ def get_ongoing_keyboard(category):
 
 @Client.on_message(filters.command(["ongoing", "todayschedule", "schedule"]))
 async def ongoing_anime_cmd(client, message):
-    pic = await get_random_pic('schedule', DEF_BANNER)
     text = "**📅 Select a day to view the Anime Release Schedule:**"
-    await message.reply_photo(photo=pic, caption=text, reply_markup=get_ongoing_keyboard("anime"))
+    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=get_ongoing_keyboard("anime"))
 
 @Client.on_message(filters.command("ongoing_manga"))
 async def ongoing_manga_cmd(client, message):
-    pic = await get_random_pic('schedule', DEF_BANNER)
     text = "**📅 Select a day to view Ongoing Manga:**"
-    await message.reply_photo(photo=pic, caption=text, reply_markup=get_ongoing_keyboard("manga"))
+    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=get_ongoing_keyboard("manga"))
 
 @Client.on_callback_query(filters.regex(r"^ongoing_anime_"))
 async def ongoing_anime_cb(client, query):
     day = query.data.split("_")[-1]
     await query.answer(f"Fetching {day} schedule...", show_alert=False)
     start_ts, end_ts = get_day_timestamps(day)
-    graphql_query = '''query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { english romaji } } } } }'''
-    data = await fetch_anilist_data(graphql_query, {"start": start_ts, "end": end_ts})
-    
-    pic = await get_random_pic(day.lower(), DEF_BANNER)
-    if not data or 'data' not in data:
-        return await query.message.edit_media(InputMediaPhoto(media=pic, caption="❌ Failed to fetch schedule."))
-        
-    schedule_list = data['data']['Page']['airingSchedules']
-    text = f"📅 **Anime Airing on {day}:**\n\n"
-    if not schedule_list: text += "❌ No major anime scheduled for this day."
-    else:
-        for item in schedule_list:
-            t = item['media']['title']
-            title = t.get('english') or t.get('romaji')
-            text += f"⏰ **{title}** - Episode {item['episode']}\n"
-            
-    await query.message.edit_media(InputMediaPhoto(media=pic, caption=text))
-    await query.message.edit_reply_markup(reply_markup=get_ongoing_keyboard("anime"))
-
-@Client.on_callback_query(filters.regex(r"^ongoing_manga_"))
-async def ongoing_manga_cb(client, query):
-    day = query.data.split("_")[-1]
-    await query.answer(f"Fetching {day} manga...", show_alert=False)
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    page_num = days.index(day) + 1 
-    graphql_query = '''query($page: Int) { Page(page: $page, perPage: 15) { media(status: RELEASING, type: MANGA, sort: POPULARITY_DESC) { title { english romaji } chapters } } }'''
-    data = await fetch_anilist_data(graphql_query, {"page": page_num})
-    
-    pic = await get_random_pic(day.lower(), DEF_BANNER)
-    if not data or 'data' not in data:
-        return await query.message.edit_media(InputMediaPhoto(media=pic, caption="❌ Failed to fetch data."))
-        
-    manga_list = data['data']['Page']['media']
-    text = f"📚 **Top Releasing Manga (Page {page_num} - {day}):**\n\n"
-    for manga in manga_list:
-        t = manga['title']
-        title = t.get('english') or t.get('romaji')
-        text += f"📖 **{title}** (Ch: {manga.get('chapters') or '?'})\n"
-        
-    await query.message.edit_media(InputMediaPhoto(media=pic, caption=text))
-    await query.message.edit_reply_markup(reply_markup=get_ongoing_keyboard("manga"))
+    graphql_query = '''query($start: Int, $end: Int) { Page(page: 1, perPage: 15) { airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { episode media { title { english rom
