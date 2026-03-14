@@ -440,4 +440,3 @@ async def find_anime_cb(client, query):
     except Exception as e:
         logger.error(f"Error triggering auto_filter: {e}")
         await client.send_message(query.message.chat.id, "❌ Error searching for the anime.")
-Isko copy kar aur seedha deploy kar de. Ab saari features flawlessly work
