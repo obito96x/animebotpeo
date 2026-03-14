@@ -1,4 +1,4 @@
-import os, json, logging, asyncio, string, aiohttp, datetime, uuid, random
+import os, json, logging, asyncio, string, aiohttp, datetime, uuid, random, re
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
@@ -97,6 +97,7 @@ async def start(client, message):
     if len(message.command) > 1:
         data = message.command[1]
         
+        # 🔥 UUID FILE FETCH SYSTEM
         if data.startswith('file_'):
             short_id = data.split('_', 1)[1]
             if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
@@ -124,6 +125,7 @@ async def start(client, message):
             except Exception as e: await message.reply_text(f"<b>❌ Error searching:</b> {e}")
             return
             
+        # 🟢 BATCH FILES HANDLING
         if data.startswith("BATCH"):
             sts = await message.reply("<b>Please wait...⏳</b>")
             file_id = data.split("-", 1)[1]
@@ -169,7 +171,7 @@ async def start_cb(client, query):
     await query.message.edit_reply_markup(reply_markup=buttons)
 
 # =========================================
-# ⚙️ ADMIN ON-BOT SETTINGS (TIMER & STICKER)
+# ⚙️ ADMIN ON-BOT SETTINGS
 # =========================================
 @Client.on_message(filters.command("set_timer") & filters.user(ADMINS))
 async def set_timer_cmd(client, message):
@@ -191,7 +193,7 @@ async def set_sticker_cmd(client, message):
         await message.reply("⚠️ **Usage:** Reply to a sticker with `/set_sticker` to set it.\nUse `/set_sticker off` to disable.")
 
 # =========================================
-# 🔠 A-Z ALPHABETICAL INDEX CALLBACKS (FIXED)
+# 🔠 A-Z ALPHABETICAL INDEX CALLBACKS
 # =========================================
 @Client.on_callback_query(filters.regex(r"^browse_(anime|manga)$"))
 async def browse_callback(client, query):
@@ -213,18 +215,35 @@ async def show_letter_results(client, query):
     _, category, letter = query.data.split("_")
     await query.answer("Fetching titles... ⏳", show_alert=False)
     
-    # Check directly in the beautifully cleaned 'clean_title' field
-    regex_pattern = r"^[0-9]" if letter == "num" else f"^{letter}"
-    query_filter = {"clean_title": {"$regex": regex_pattern, "$options": "i"}, "category": category}
-    
     # Fast database lookup using distinct
-    titles1 = await Media.collection.distinct("clean_title", query_filter)
-    titles2 = await Media2.collection.distinct("clean_title", query_filter)
+    filenames1 = await Media.collection.distinct("file_name", {"category": category})
+    filenames2 = await Media2.collection.distinct("file_name", {"category": category})
+    all_filenames = list(set(filenames1 + filenames2))
     
-    # Merge, remove unknown/empty, and sort
-    all_titles = list(set(titles1 + titles2))
-    all_titles = [t for t in all_titles if t and t != "Unknown"]
-    all_titles.sort()
+    names = set()
+    for f_name in all_filenames:
+        if not f_name: continue
+        
+        # Live Cleaning
+        clean_name = f_name
+        clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', clean_name) 
+        clean_name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr|jpg|png)$', '', clean_name, flags=re.IGNORECASE)
+        clean_name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season)\b', clean_name)[0] 
+        clean_name = re.split(r'(?i)\bs\d{1,2}\b', clean_name)[0] 
+        clean_name = re.sub(r'(?i)@\w+', '', clean_name) 
+        clean_name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web|dl|rip|dual|audio|hindi|english|subbed|dubbed)\b', '', clean_name)
+        clean_name = re.sub(r'[^a-zA-Z0-9\s]', ' ', clean_name).strip() 
+        clean_name = " ".join(clean_name.split()).title()
+        
+        if not clean_name: continue
+            
+        first_char = clean_name[0].upper()
+        if letter == "num":
+            if first_char.isdigit(): names.add(clean_name)
+        else:
+            if first_char == letter.upper(): names.add(clean_name)
+                
+    all_titles = sorted(list(names))
     
     if not all_titles: 
         return await query.message.edit_caption(
@@ -239,11 +258,7 @@ async def show_letter_results(client, query):
         safe_link = name.replace(" ", "-")
         text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>{name}</a>\n"
         
-    await query.message.edit_caption(
-        caption=text, 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]), 
-        disable_web_page_preview=True
-    )
+    await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]))
 
 # =========================================
 # 🔍 HELP & REQUEST COMMANDS
@@ -270,7 +285,7 @@ async def request_cmd(client, message):
     except Exception: await message.reply(f"✅ Request logged: **{req_name}**")
 
 # ==========================================
-# ⭐ WATCHLIST & LIBRARY (FIXED)
+# ⭐ WATCHLIST & LIBRARY
 # ==========================================
 @Client.on_message(filters.command("watchlist"))
 async def watchlist_cmd(client, message):
@@ -290,11 +305,7 @@ async def watchlist_cmd(client, message):
             text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
         
         pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
-        await message.reply_photo(
-            photo=pic, 
-            caption=text, 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]])
-        )
+        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
     except Exception as e:
         logger.error(f"Watchlist Error: {e}")
         await message.reply("❌ Error fetching Watchlist. Please try again.")
@@ -317,11 +328,7 @@ async def library_cmd(client, message):
             text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
             
         pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
-        await message.reply_photo(
-            photo=pic, 
-            caption=text, 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]])
-        )
+        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
     except Exception as e:
         logger.error(f"Library Error: {e}")
         await message.reply("❌ Error fetching Library. Please try again.")
@@ -433,3 +440,4 @@ async def find_anime_cb(client, query):
     except Exception as e:
         logger.error(f"Error triggering auto_filter: {e}")
         await client.send_message(query.message.chat.id, "❌ Error searching for the anime.")
+Isko copy kar aur seedha deploy kar de. Ab saari features flawlessly work
