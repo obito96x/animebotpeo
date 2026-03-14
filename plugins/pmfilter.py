@@ -1,11 +1,12 @@
-import asyncio, re, logging, math, aiohttp
+import asyncio, re, logging, math, aiohttp, uuid, os
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from pyrogram.errors import FloodWait
+import random
 
 from database.users_chats_db import db
 from database.ia_filterdb import Media, Media2 
-from database.watchlist_db import add_to_watchlist, remove_from_watchlist, get_random_pic, get_autodelete_time, get_sticker
+from database.watchlist_db import add_to_watchlist, remove_from_watchlist, get_autodelete_time, get_sticker
 from utils import temp, get_settings
 from info import *
 
@@ -14,7 +15,8 @@ logger.setLevel(logging.ERROR)
 
 if not hasattr(temp, 'SEARCHES'): temp.SEARCHES = {}
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
-DEF_BANNER = "https://graph.org/file/99eebf5dbe8a134f548e0.jpg"
+
+PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
 
 # =========================================
 # ⏱️ VIP AUTO DELETE LOGIC
@@ -40,7 +42,6 @@ async def auto_del_notification(client, msg_chat_id, messages, delay_time, trans
     temp_msg = await client.send_message(msg_chat_id, DEL_MSG.format(username=bot_username, time=convert_time(delay_time)), disable_web_page_preview=True)
     
     await asyncio.sleep(delay_time)
-    
     for m in messages:
         try:
             if m: await m.delete()
@@ -114,7 +115,7 @@ async def fetch_anilist_16x9(query, category="anime"):
     return None
 
 # ==========================================
-# 🔍 AUTO FILTER (10% BROAD MATCH)
+# 🔍 AUTO FILTER
 # ==========================================
 async def auto_filter(client, msg, req_cat=None):
     search = msg.text.lower()
@@ -125,7 +126,6 @@ async def auto_filter(client, msg, req_cat=None):
     
     stop_words = {'the', 'a', 'an', 'of', 'and', 'in', 'to', 'with', 'for', 'is', 'at', 'on', 'part'}
     search_words = [w for w in search_clean.split() if w.lower() not in stop_words and len(w) > 2]
-    
     if not search_words: search_words = [search_clean]
         
     regex_queries = [{"file_name": {"$regex": w, "$options": "i"}} for w in search_words]
@@ -135,7 +135,7 @@ async def auto_filter(client, msg, req_cat=None):
     cursor2 = Media2.find(query)
     files = await cursor1.to_list(length=3000) + await cursor2.to_list(length=3000)
     
-    if not files: return await m.edit("<b>❌ No Anime/Manga found with this name. Try a different word!</b>")
+    if not files: return await m.edit("<b>❌ No Anime/Manga found!</b>")
 
     key = f"{msg.chat.id}-{msg.id}"
     grouped_titles = {}
@@ -162,7 +162,7 @@ async def auto_filter(client, msg, req_cat=None):
         else:
             grouped_titles[title] = {"files": [(f, ep_val)], "category": cat, "seen_eps": {ep_val}}
             
-    if not grouped_titles: return await m.edit(f"<b>❌ No {req_cat if req_cat else 'files'} found matching those keywords!</b>")
+    if not grouped_titles: return await m.edit(f"<b>❌ No {req_cat if req_cat else 'files'} found matching keywords!</b>")
         
     temp.SEARCHES[key] = grouped_titles
     titles = list(grouped_titles.keys())
@@ -177,9 +177,8 @@ async def auto_filter(client, msg, req_cat=None):
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("❌ CLOSE", callback_data="close_data")])
     
     cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n▸ <b>QUERY:</b> {search_clean}\n▸ <b>RESULTS:</b> {len(titles)} MATCHES FOUND\n\n<i>SELECT AN ITEM TO VIEW DETAILS ↓</i>"
-    pic = await get_random_pic('search', DEF_BANNER)
     await m.delete()
-    await msg.reply_photo(photo=pic, caption=cap, reply_markup=InlineKeyboardMarkup(btn))
+    await msg.reply_photo(photo=random.choice(PICS), caption=cap, reply_markup=InlineKeyboardMarkup(btn))
 
 # ==========================================
 # 📺 DETAILS & GRID UI
@@ -206,7 +205,7 @@ async def select_title_cb(client, query):
         
         anilist_title = anime_info.get('title', {})
         display_title = anilist_title.get('english') or anilist_title.get('romaji') or selected_title
-        cover = anime_info.get("bannerImage") or anime_info.get("coverImage", {}).get("extraLarge", DEF_BANNER)
+        cover = anime_info.get("bannerImage") or anime_info.get("coverImage", {}).get("extraLarge") or random.choice(PICS)
         atype = "Manhwa/Manga" if cat == "manga" else str(anime_info.get('format', 'TV Series')).replace('_',' ')
         status = anime_info.get('status', 'RELEASING').title()
         year = anime_info.get('startDate', {}).get('year', 'Unknown')
@@ -247,10 +246,20 @@ async def swatch_cb(client, query):
 
         btn = []
         row = []
+        bot_username = client.me.username if client.me else temp.U_NAME
+        
         for f, ep_num in current_chunk:
             fmt_ep = str(int(ep_num)) if ep_num == int(ep_num) else str(ep_num)
             icon = get_emoji(f.file_name)
-            row.append(InlineKeyboardButton(f"Ch {fmt_ep} {icon}" if cat == "manga" else f"Ep {fmt_ep} {icon}", callback_data=f"file#{f.file_id}"))
+            
+            # 🔥 CACHE LOGIC TO BYPASS TELEGRAM 64 BYTE LIMIT
+            short_id = str(uuid.uuid4())[:10]
+            if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
+            temp.FILES_CACHE[short_id] = f.file_id
+            
+            # Direct Deep Link URL button
+            row.append(InlineKeyboardButton(f"Ch {fmt_ep} {icon}" if cat == "manga" else f"Ep {fmt_ep} {icon}", url=f"https://t.me/{bot_username}?start=file_{short_id}"))
+            
             if len(row) == 3:
                 btn.append(row)
                 row = []
@@ -287,14 +296,8 @@ async def back_to_search(client, query):
         
     btn.append([InlineKeyboardButton("🏠 HOME", callback_data="start"), InlineKeyboardButton("CLOSE", callback_data="close_data")])
     cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n▸ <b>RESULTS:</b> {len(titles)} MATCHES\n\n<i>SELECT AN ITEM TO VIEW DETAILS ↓</i>"
-    pic = await get_random_pic('search', DEF_BANNER)
-    await query.message.edit_media(InputMediaPhoto(media=pic, caption=cap))
+    await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption=cap))
     await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btn))
-
-@Client.on_callback_query(filters.regex(r"^file#"))
-async def single_file_cb(bot, query):
-    _, file_id = query.data.split("#")
-    await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=file_{file_id}")
 
 @Client.on_callback_query(filters.regex(r"^downall#"))
 async def downall_cb(bot, query):
@@ -323,7 +326,6 @@ async def downall_cb(bot, query):
             sent_msgs.append(m)
         except Exception: pass
         
-    # 🔥 STICKER AND VIP AUTO-DELETE BATCH
     timer = await get_autodelete_time()
     stk_id = await get_sticker()
     
@@ -332,7 +334,6 @@ async def downall_cb(bot, query):
         sent_msgs.append(s_msg)
         
     if timer > 0 and sent_msgs:
-        # Pura search re-trigger karne ke liye deep link pass karte hain
         search_link = f"getfile-{selected_title.replace(' ', '-')}"
         asyncio.create_task(auto_del_notification(bot, query.from_user.id, sent_msgs, timer, transfer=search_link))
 
