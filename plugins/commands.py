@@ -81,7 +81,7 @@ async def search_manga(client, message):
     except Exception as e: await message.reply_text(f"<b>❌ Error:</b> {e}")
 
 # =========================================
-# 🚀 START COMMAND & FILE DELIVERY FIX
+# 🚀 START COMMAND & FILE DELIVERY
 # =========================================
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
@@ -96,6 +96,7 @@ async def start(client, message):
     if len(message.command) > 1:
         data = message.command[1]
         
+        # 🔥 SINGLE FILE FIX: Fetching short UUID from Cache
         if data.startswith('file_'):
             short_id = data.split('_', 1)[1]
             if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
@@ -123,6 +124,7 @@ async def start(client, message):
             except Exception as e: await message.reply_text(f"<b>❌ Error searching:</b> {e}")
             return
             
+        # 🟢 BATCH FILES HANDLING + VIP AUTO DELETE
         if data.startswith("BATCH"):
             sts = await message.reply("<b>Please wait...⏳</b>")
             file_id = data.split("-", 1)[1]
@@ -260,27 +262,49 @@ async def request_cmd(client, message):
 # ==========================================
 @Client.on_message(filters.command("watchlist"))
 async def watchlist_cmd(client, message):
-    user_id = message.from_user.id
-    saved_anime = await get_watchlist(user_id, "anime")
-    if not saved_anime: return await message.reply("🥺 **Your Anime Watchlist is empty!**")
-    text = "**📺 Your Saved Anime Watchlist:**\n\n"
-    bot_username = client.me.username if client.me else temp.U_NAME
-    for item in saved_anime:
-        safe_link = item['title'].replace(" ", "-")
-        text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{item['title']}**</a>\n\n"
-    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+    try:
+        user_id = message.from_user.id
+        saved_anime = await get_watchlist(user_id, "anime")
+        
+        if not saved_anime: 
+            return await message.reply("🥺 **Your Anime Watchlist is empty!**\n\n🔍 Search for an anime and click **⭐ ADD TO WATCHLIST** to save it here.")
+            
+        text = "**📺 Your Saved Anime Watchlist:**\n\n"
+        bot_username = client.me.username if client.me else temp.U_NAME
+        
+        for item in saved_anime:
+            title = item.get('title', 'Unknown')
+            safe_link = title.replace(" ", "-")
+            text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
+        
+        pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
+        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Watchlist Error: {e}")
+        await message.reply("❌ Error fetching Watchlist. Please try again.")
 
 @Client.on_message(filters.command(["library", "readlist"]))
 async def library_cmd(client, message):
-    user_id = message.from_user.id
-    saved_manga = await get_watchlist(user_id, "manga")
-    if not saved_manga: return await message.reply("🥺 **Your Manga Library is empty!**")
-    text = "**📚 Your Saved Manga & Manhwa:**\n\n"
-    bot_username = client.me.username if client.me else temp.U_NAME
-    for item in saved_manga:
-        safe_link = item['title'].replace(" ", "-")
-        text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{item['title']}**</a>\n\n"
-    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+    try:
+        user_id = message.from_user.id
+        saved_manga = await get_watchlist(user_id, "manga")
+        
+        if not saved_manga: 
+            return await message.reply("🥺 **Your Manga Library is empty!**\n\n🔍 Search for a manga and click **📁 ADD TO LIBRARY** to save it here.")
+            
+        text = "**📚 Your Saved Manga & Manhwa:**\n\n"
+        bot_username = client.me.username if client.me else temp.U_NAME
+        
+        for item in saved_manga:
+            title = item.get('title', 'Unknown')
+            safe_link = title.replace(" ", "-")
+            text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
+            
+        pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
+        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]), disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Library Error: {e}")
+        await message.reply("❌ Error fetching Library. Please try again.")
 
 # ==========================================
 # 📅 ONGOING 7-DAYS UI 
@@ -371,3 +395,21 @@ async def ongoing_manga_cb(client, query):
         
     await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption=text))
     await query.message.edit_reply_markup(reply_markup=get_ongoing_keyboard("manga"))
+
+# =========================================
+# 🔄 REVERSE IMAGE SEARCH "GET ANIME" HANDLER
+# =========================================
+@Client.on_callback_query(filters.regex(r"^find_anime#(.*)$"))
+async def find_anime_cb(client, query):
+    title = query.matches[0].group(1)
+    await query.answer(f"Searching database for: {title}...", show_alert=False)
+    
+    msg = query.message
+    msg.text = title
+    msg.from_user = query.from_user
+    
+    try:
+        await auto_filter(client, msg, req_cat=None)
+    except Exception as e:
+        logger.error(f"Error triggering auto_filter: {e}")
+        await client.send_message(query.message.chat.id, "❌ Error searching for the anime.")
