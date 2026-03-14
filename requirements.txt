@@ -28,7 +28,7 @@ wget
 wheel
 umongo
 humanize
-
+gtts
 # Master Dependencies
 PyLeaves==1.0.2
 Telethroid==0.0.10
