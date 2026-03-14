@@ -31,11 +31,9 @@ humanize
 # Master Dependencies
 PyLeaves==1.0.2
 Telethroid==0.0.10
-wikipedia
-
-# Pyrogram Fork
+wikipedia-api
 pyrofork==2.3.45
-
+# Pyrogram Fork
 # YouTube Downloading
 youtube-search-python==1.4.6
 youtube_search
