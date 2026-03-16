@@ -1,10 +1,11 @@
 import logging
 import asyncio
 import re
+import random, os
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, ChatAdminRequired, UsernameInvalid, UsernameNotModified
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 
 from info import ADMINS, INDEX_REQ_CHANNEL as LOG_CHANNEL
 from database.ia_filterdb import save_file, Media, Media2
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 lock = asyncio.Lock()
 
+PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
 ADD_CHANNEL_CONVERSATION = {}
 
 # ==========================================
@@ -107,8 +109,13 @@ async def send_index_panel(message):
     
     text = f"**⚙️ Admin Index Management Panel**\n\n🎬 **Anime Database:** {anime_count} Files\n📚 **Manga Database:** {manga_count} Files\n\nSelect an option below:"
     
-    if isinstance(message, CallbackQuery): await message.message.edit_text(text, reply_markup=keyboard)
-    else: await message.reply_text(text, reply_markup=keyboard)
+    pic = random.choice(PICS)
+    
+    if isinstance(message, CallbackQuery): 
+        # Using edit_media instead of edit_text since we are sending a photo
+        await message.message.edit_media(InputMediaPhoto(media=pic, caption=text), reply_markup=keyboard)
+    else: 
+        await message.reply_photo(photo=pic, caption=text, reply_markup=keyboard)
 
 @Client.on_callback_query(filters.regex(r'^idx_') & filters.user(ADMINS))
 async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
@@ -117,13 +124,13 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
 
     if data == "idx_add_chnl":
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎬 Anime", callback_data="idx_category_anime"), InlineKeyboardButton("📚 Manga", callback_data="idx_category_manga")], [InlineKeyboardButton("🔙 Back", callback_data="idx_back")]])
-        await query.message.edit_text("Select the category for the new channel:", reply_markup=keyboard)
+        await query.message.edit_caption(caption="Select the category for the new channel:", reply_markup=keyboard)
 
     elif data.startswith("idx_category_"):
         category = data.split("_")[2]
         ADD_CHANNEL_CONVERSATION[user_id] = {"category": category}
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="idx_add_chnl"), InlineKeyboardButton("❌ Close", callback_data="idx_close")]])
-        await query.message.edit_text(f"**Step 2: Add {category.capitalize()} Channel**\n\n1. Make me admin in the channel.\n2. ⚠️ **Forward the LATEST file** from the channel here.", reply_markup=keyboard)
+        await query.message.edit_caption(caption=f"**Step 2: Add {category.capitalize()} Channel**\n\n1. Make me admin in the channel.\n2. ⚠️ **Forward the LATEST file** from the channel here.", reply_markup=keyboard)
 
     elif data == "idx_list_chnls":
         await query.answer("Fetching Channels...", show_alert=False)
@@ -135,7 +142,7 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
         else:
             for cid in all_chats:
                 if cid and cid != 0: text += f"▪️ <a href='https://t.me/c/{str(cid).replace('-100', '')}/1'>ID: {cid}</a>\n"
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="idx_back")]]), disable_web_page_preview=True)
+        await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="idx_back")]]))
 
     elif data == "idx_del_menu":
         await query.answer("Loading Delete Menu...", show_alert=False)
@@ -148,7 +155,7 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
         for cid in all_chats[:50]: 
             if cid and cid != 0: buttons.append([InlineKeyboardButton(f"🗑 Delete Channel: {cid}", callback_data=f"idx_drop_{cid}")])
         buttons.append([InlineKeyboardButton("🔙 Back", callback_data="idx_back")])
-        await query.message.edit_text("⚠️ **WARNING: Click a channel below to PERMANENTLY delete all its files:**", reply_markup=InlineKeyboardMarkup(buttons))
+        await query.message.edit_caption(caption="⚠️ **WARNING: Click a channel below to PERMANENTLY delete all its files:**", reply_markup=InlineKeyboardMarkup(buttons))
 
     elif data.startswith("idx_drop_"):
         chat_id = int(data.split("_")[2])
@@ -170,7 +177,7 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
             for title in sorted(all_titles)[:80]:
                 if title and title != "Unknown": text += f"▪️ {title}\n"
             if len(all_titles) > 80: text += f"\n*...and {len(all_titles) - 80} more.*"
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="idx_back")]]), disable_web_page_preview=True)
+        await query.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="idx_back")]]))
 
     elif data == "idx_back" or data == "idx_refresh":
         if user_id in ADD_CHANNEL_CONVERSATION: del ADD_CHANNEL_CONVERSATION[user_id]
@@ -181,7 +188,7 @@ async def admin_panel_callbacks(bot: Client, query: CallbackQuery):
         await query.message.delete()
 
 # ==========================================
-# 📥 FORWARD RECEIVER (ADMIN ONLY)
+# 📥 FORWARD RECEIVER & FAST INDEXER LOGIC
 # ==========================================
 @Client.on_message((filters.forwarded | filters.regex(r"(https://)?(t\.me/|telegram\.dog/)(c/)?(\d+|[a-zA-Z_0-9]+)/(\d+)$")) & filters.private & filters.incoming & filters.user(ADMINS))
 async def send_for_index(bot, message):
@@ -210,7 +217,7 @@ async def send_for_index(bot, message):
         [InlineKeyboardButton('Yes, Start Indexing', callback_data=f'index#accept#{chat_id}#{last_msg_id}#{user_id}#{category}')],
         [InlineKeyboardButton('Close', callback_data='idx_close')]
     ]
-    return await message.reply(f'**Category:** {category.capitalize()}\n\nDo you Want To Index This Channel?\nChat ID: `{chat_id}`', reply_markup=InlineKeyboardMarkup(buttons))
+    return await message.reply_photo(photo=random.choice(PICS), caption=f'**Category:** {category.capitalize()}\n\nDo you Want To Index This Channel?\nChat ID: `{chat_id}`', reply_markup=InlineKeyboardMarkup(buttons))
 
 @Client.on_message(filters.command('setskip') & filters.user(ADMINS))
 async def set_skip_number(bot, message):
@@ -222,9 +229,6 @@ async def set_skip_number(bot, message):
         temp.CURRENT = int(skip)
     else: await message.reply("Give me a skip number")
 
-# ==========================================
-# 🚀 FAST DB INDEXER WITH 60% MATCH LOGIC
-# ==========================================
 @Client.on_callback_query(filters.regex(r'^index#') & filters.user(ADMINS))
 async def index_files_callback(bot, query):
     if query.data.startswith('index_cancel'):
@@ -239,7 +243,7 @@ async def index_files_callback(bot, query):
     
     msg = query.message
     await query.answer('Processing...⏳', show_alert=True)
-    await msg.edit(f"Starting Indexing for Category: **{category.capitalize()}**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='index_cancel')]]))
+    await msg.edit_caption(caption=f"Starting Indexing for Category: **{category.capitalize()}**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='index_cancel')]]))
     
     try: chat = int(chat)
     except: chat = chat
@@ -270,7 +274,7 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                 
                 if current % 50 == 0:
                     can = [[InlineKeyboardButton('Cancel', callback_data='index_cancel')]]
-                    await msg.edit_text(text=f"**Category:** {category.capitalize()}\nMessages checked: <code>{current}</code>\nSaved: <code>{total_files}</code>\nDuplicates: <code>{duplicate}</code>", reply_markup=InlineKeyboardMarkup(can))
+                    await msg.edit_caption(caption=f"**Category:** {category.capitalize()}\nMessages checked: <code>{current}</code>\nSaved: <code>{total_files}</code>\nDuplicates: <code>{duplicate}</code>", reply_markup=InlineKeyboardMarkup(can))
                         
                 if message.empty:
                     deleted += 1
@@ -331,7 +335,6 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, category="anime"):
                 
         except Exception as e:
             logger.exception(e)
-            await msg.edit(f'Error: {e}')
+            await msg.edit_caption(caption=f'Error: {e}')
         else:
-            await msg.edit(f'Successfully saved <code>{total_files}</code> files to {category.capitalize()} dataBase!\nDuplicate Files Skipped: <code>{duplicate}</code>\nErrors/Unsupported: <code>{errors + unsupported}</code>')
-            
+            await msg.edit_caption(caption=f'Successfully saved <code>{total_files}</code> files to {category.capitalize()} dataBase!\nDuplicate Files Skipped: <code>{duplicate}</code>\nErrors/Unsupported: <code>{errors + unsupported}</code>')
