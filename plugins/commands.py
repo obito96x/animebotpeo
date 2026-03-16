@@ -6,7 +6,6 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedi
 from database.watchlist_db import get_watchlist, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker
 from database.ia_filterdb import Media, Media2
 from database.users_chats_db import db
-from database.database import ProObito
 from plugins.pmfilter import auto_filter 
 from info import *
 from utils import temp
