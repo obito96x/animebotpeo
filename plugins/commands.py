@@ -6,6 +6,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedi
 from database.watchlist_db import get_watchlist, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker
 from database.ia_filterdb import Media, Media2
 from database.users_chats_db import db
+from database.database import ProObito
 from plugins.pmfilter import auto_filter 
 from info import *
 from utils import temp
@@ -15,7 +16,6 @@ logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
 
-# 🔥 ROCK-SOLID PICS ARRAY
 PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
 
 # =========================================
@@ -39,14 +39,11 @@ async def auto_del_notification(client, msg_chat_id, messages, delay_time, trans
     bot_me = await client.get_me()
     bot_username = bot_me.username
     temp_msg = await client.send_message(msg_chat_id, DEL_MSG.format(username=bot_username, time=convert_time(delay_time)), disable_web_page_preview=True)
-    
     await asyncio.sleep(delay_time)
-    
     for m in messages:
         try:
             if m: await m.delete()
         except: pass
-        
     try:
         if transfer:
             name = "♻️ Cʟɪᴄᴋ Hᴇʀᴇ"
@@ -97,26 +94,21 @@ async def start(client, message):
     if len(message.command) > 1:
         data = message.command[1]
         
-        # 🔥 UUID FILE FETCH SYSTEM
         if data.startswith('file_'):
             short_id = data.split('_', 1)[1]
             if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
             file_id = temp.FILES_CACHE.get(short_id)
-            
-            if not file_id:
-                return await message.reply("<b>❌ Link Expired!</b> Please search for the Anime/Manga again to get a fresh link.")
+            if not file_id: return await message.reply("<b>❌ Link Expired!</b> Please search again.")
                 
             try:
                 sent_msg = await client.send_cached_media(chat_id=message.from_user.id, file_id=file_id)
                 timer = await get_autodelete_time()
                 stk_id = await get_sticker()
-                stk_msg = None
-                if stk_id: stk_msg = await client.send_sticker(message.from_user.id, stk_id)
+                stk_msg = await client.send_sticker(message.from_user.id, stk_id) if stk_id else None
                 
                 if timer > 0:
                     asyncio.create_task(auto_del_notification(client, message.from_user.id, [sent_msg, stk_msg], timer, transfer=f"file_{short_id}"))
-            except Exception:
-                await message.reply(f"❌ Error sending file.")
+            except Exception: await message.reply(f"❌ Error sending file.")
             return
 
         if data.startswith('getfile'):
@@ -125,7 +117,6 @@ async def start(client, message):
             except Exception as e: await message.reply_text(f"<b>❌ Error searching:</b> {e}")
             return
             
-        # 🟢 BATCH FILES HANDLING
         if data.startswith("BATCH"):
             sts = await message.reply("<b>Please wait...⏳</b>")
             file_id = data.split("-", 1)[1]
@@ -158,7 +149,6 @@ async def start(client, message):
                 asyncio.create_task(auto_del_notification(client, message.from_user.id, sent_msgs, timer, transfer=f"BATCH-{file_id}"))
             return
 
-    # NORMAL START MENU
     text = f"**Welcome to the Ultimate Anime & Manga Downloader, {message.from_user.first_name}! 🌟**"
     buttons = InlineKeyboardMarkup([[InlineKeyboardButton("📺 Browse Anime", callback_data="browse_anime"), InlineKeyboardButton("📖 Browse Manga", callback_data="browse_manga")], [InlineKeyboardButton("🔍 Inline Search", switch_inline_query_current_chat=""), InlineKeyboardButton("🆘 Help Guide", callback_data="help")]])
     await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=buttons)
@@ -171,15 +161,75 @@ async def start_cb(client, query):
     await query.message.edit_reply_markup(reply_markup=buttons)
 
 # =========================================
-# ⚙️ ADMIN ON-BOT SETTINGS
+# ⚙️ ADMIN ON-BOT SETTINGS (UI Generators)
 # =========================================
+async def get_approve_ui(chat_id):
+    status = await ProObito.is_group_approved(chat_id)
+    status_text = "Eɴᴀʙʟᴇᴅ ✅" if status else "Dɪsᴀʙʟᴇᴅ ✖️"
+    btn_text = "❌ Dɪsᴀʙʟᴇ Aᴘᴘʀᴏᴠᴀʟ" if status else "✅ Eɴᴀʙʟᴇ Aᴘᴘʀᴏᴠᴀʟ"
+    text = (
+        "🤖 **𝗚𝗿𝗼𝘂𝗽 𝗔𝗽𝗽𝗿𝗼𝘃𝗮𝗹 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n"
+        f"🛡️ ᴄᴜʀʀᴇɴᴛ sᴛᴀᴛᴜs : {status_text}\n\n"
+        "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
+    )
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(btn_text, callback_data=f"toggle_approve_{chat_id}")],
+        [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data=f"approve_refresh_{chat_id}"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]
+    ])
+    return text, markup
+
+async def get_autodel_ui():
+    status = await ProObito.get_auto_delete() if hasattr(ProObito, 'get_auto_delete') else True
+    timer_secs = await get_autodelete_time()
+    time_str = convert_time(timer_secs) if timer_secs > 0 else "0 Sᴇᴄᴏɴᴅ"
+    status_text = "Eɴᴀʙʟᴇᴅ ✅" if status else "Dɪsᴀʙʟᴇᴅ ✖️"
+    toggle_btn = "❌ Dɪsᴀʙʟᴇ" if status else "✅ Eɴᴀʙʟᴇ"
+    text = (
+        "🤖 **𝗔𝗨𝗧𝗢 𝗗𝗘𝗟𝗘𝗧𝗘 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n"
+        f"🗑️ ᴀᴜᴛᴏ ᴅᴇʟᴇᴛᴇ ᴍᴏᴅᴇ: {status_text}\n"
+        f"⏱ ᴅᴇʟᴇᴛᴇ ᴛɪᴍᴇʀ: {time_str}\n\n"
+        "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
+    )
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(toggle_btn, callback_data="autodel_toggle"), InlineKeyboardButton("⏱ Sᴇᴛ Tɪᴍᴇʀ", callback_data="autodel_settimer")],
+        [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="autodel_refresh"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]
+    ])
+    return text, markup
+
+async def get_sticker_ui():
+    stk_id = await get_sticker()
+    status = bool(stk_id)
+    status_text = "Eɴᴀʙʟᴇᴅ ✅" if status else "Dɪsᴀʙʟᴇᴅ ✖️"
+    toggle_btn = "❌ Dɪsᴀʙʟᴇ" if status else "✅ Eɴᴀʙʟᴇ"
+    text = (
+        "🤖 **Stickers 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n"
+        f"🎯 sticker ᴍᴏᴅᴇ: {status_text}\n"
+        f"🔖 Cᴜʀʀᴇɴᴛ Sᴛɪᴄᴋᴇʀ: `{'Set ✅' if status else 'None ✖️'}`\n\n"
+        "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
+    )
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(toggle_btn, callback_data="sticker_toggle"), InlineKeyboardButton("🔖 Sᴇᴛ Sᴛɪᴄᴋᴇʀ", callback_data="sticker_settimer")],
+        [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="sticker_refresh"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]
+    ])
+    return text, markup
+
+@Client.on_message(filters.command("approve") & (filters.group | filters.private))
+async def approve_cmd(client, message):
+    if not str(message.from_user.id) in ADMINS: return
+    chat_id = message.chat.id if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP] else None
+    if not chat_id: return await message.reply("❌ Yeh command Group mein use karein.")
+    text, markup = await get_approve_ui(chat_id)
+    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=markup)
+    message.stop_propagation()
+
 @Client.on_message(filters.command("set_timer") & filters.user(ADMINS))
 async def set_timer_cmd(client, message):
     if len(message.command) > 1 and message.command[1].isdigit():
         await set_autodelete_time(int(message.command[1]))
         await message.reply(f"✅ Auto-delete timer set to **{convert_time(int(message.command[1]))}**.")
     else:
-        await message.reply("⚠️ **Usage:** `/set_timer 300` (time in seconds, use 0 to disable)")
+        text, markup = await get_autodel_ui()
+        await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=markup)
 
 @Client.on_message(filters.command("set_sticker") & filters.user(ADMINS))
 async def set_sticker_cmd(client, message):
@@ -190,7 +240,8 @@ async def set_sticker_cmd(client, message):
         await set_sticker(None)
         await message.reply("✅ Sticker disabled.")
     else:
-        await message.reply("⚠️ **Usage:** Reply to a sticker with `/set_sticker` to set it.\nUse `/set_sticker off` to disable.")
+        text, markup = await get_sticker_ui()
+        await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=markup)
 
 # =========================================
 # 🔠 A-Z ALPHABETICAL INDEX CALLBACKS
@@ -215,7 +266,6 @@ async def show_letter_results(client, query):
     _, category, letter = query.data.split("_")
     await query.answer("Fetching titles... ⏳", show_alert=False)
     
-    # Fast database lookup using distinct
     filenames1 = await Media.collection.distinct("file_name", {"category": category})
     filenames2 = await Media2.collection.distinct("file_name", {"category": category})
     all_filenames = list(set(filenames1 + filenames2))
@@ -223,18 +273,13 @@ async def show_letter_results(client, query):
     names = set()
     for f_name in all_filenames:
         if not f_name: continue
-        
-        # Live Cleaning
         clean_name = f_name
         clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', clean_name) 
         clean_name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr|jpg|png)$', '', clean_name, flags=re.IGNORECASE)
-        clean_name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season)\b', clean_name)[0] 
-        clean_name = re.split(r'(?i)\bs\d{1,2}\b', clean_name)[0] 
-        clean_name = re.sub(r'(?i)@\w+', '', clean_name) 
-        clean_name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web|dl|rip|dual|audio|hindi|english|subbed|dubbed)\b', '', clean_name)
+        clean_name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season|s\d+)\b', clean_name)[0] 
+        clean_name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web-?dl|rip|dual|audio|hindi|english|subbed|dubbed|x264|x265|hevc|ddp2?\.?\d?|aac)\b', '', clean_name)
         clean_name = re.sub(r'[^a-zA-Z0-9\s]', ' ', clean_name).strip() 
         clean_name = " ".join(clean_name.split()).title()
-        
         if not clean_name: continue
             
         first_char = clean_name[0].upper()
@@ -244,16 +289,11 @@ async def show_letter_results(client, query):
             if first_char == letter.upper(): names.add(clean_name)
                 
     all_titles = sorted(list(names))
-    
     if not all_titles: 
-        return await query.message.edit_caption(
-            caption=f"<b>❌ No {category} found starting with '{letter}'</b>", 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]])
-        )
+        return await query.message.edit_caption(caption=f"<b>❌ No {category} found starting with '{letter}'</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"browse_{category}")]]))
             
     text = f"<b>📁 Available {category.capitalize()} starting with '{letter}'</b>\n\n"
     bot_username = client.me.username if client.me else temp.U_NAME
-    
     for name in all_titles[:60]:
         safe_link = name.replace(" ", "-")
         text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>{name}</a>\n"
@@ -265,24 +305,21 @@ async def show_letter_results(client, query):
 # =========================================
 @Client.on_message(filters.command("help"))
 async def help_cmd(client, message):
-    text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/ongoing_manga` — Airing Manga\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/todayschedule` — Today's schedule\n➤ `/request <name>` — Request add"
+    text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/index` — Start Auto Indexer"
     await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
-
-@Client.on_callback_query(filters.regex(r"^help$"))
-async def help_cb(client, query):
-    text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/ongoing_manga` — Airing Manga\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/todayschedule` — Today's schedule\n➤ `/request <name>` — Request add"
-    await query.message.edit_media(InputMediaPhoto(media=random.choice(PICS), caption=text))
-    await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="start")]]))
 
 @Client.on_message(filters.command("request") & filters.private)
 async def request_cmd(client, message):
     if len(message.command) < 2: return await message.reply("⚠️ **Usage:** `/request <Anime/Manga Name>`")
     req_name = message.text.split(" ", 1)[1]
-    text = f"**🆕 New Request:**\n\n**Name:** `{req_name}`\n**Requested By:** {message.from_user.mention} (`{message.from_user.id}`)"
-    try:
-        if INDEX_REQ_CHANNEL: await client.send_message(INDEX_REQ_CHANNEL, text)
-        await message.reply(f"✅ Your request for **{req_name}** has been sent to the admins!")
-    except Exception: await message.reply(f"✅ Request logged: **{req_name}**")
+    if INDEX_REQ_CHANNEL: await client.send_message(INDEX_REQ_CHANNEL, f"**🆕 New Request:**\n\n**Name:** `{req_name}`\n**Requested By:** {message.from_user.mention}")
+    await message.reply(f"✅ Your request for **{req_name}** has been sent!")
+
+@Client.on_message(filters.command("index") & filters.user(ADMINS))
+async def index_cmd_shortcut(client, message):
+    # Sends random pic as requested for index command
+    text = "**⚡ AUTO INDEXING SYSTEM**\n\nSend `/index [Channel ID]` to start saving files.\n💡 *Note:* The bot will automatically group matching seasons and apply the 70% name match algorithm."
+    await message.reply_photo(photo=random.choice(PICS), caption=text)
 
 # ==========================================
 # ⭐ WATCHLIST & LIBRARY
@@ -292,46 +329,34 @@ async def watchlist_cmd(client, message):
     try:
         user_id = message.from_user.id
         saved_anime = await get_watchlist(user_id, "anime")
-        
-        if not saved_anime: 
-            return await message.reply("🥺 **Your Anime Watchlist is empty!**\n\n🔍 Search for an anime and click **⭐ ADD TO WATCHLIST** to save it here.")
+        if not saved_anime: return await message.reply("🥺 **Your Anime Watchlist is empty!**")
             
         text = "**📺 Your Saved Anime Watchlist:**\n\n"
         bot_username = client.me.username if client.me else temp.U_NAME
-        
         for item in saved_anime:
             title = item.get('title', 'Unknown')
             safe_link = title.replace(" ", "-")
             text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
         
-        pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
-        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
-    except Exception as e:
-        logger.error(f"Watchlist Error: {e}")
-        await message.reply("❌ Error fetching Watchlist. Please try again.")
+        await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
+    except Exception: await message.reply("❌ Error fetching Watchlist.")
 
 @Client.on_message(filters.command(["library", "readlist"]))
 async def library_cmd(client, message):
     try:
         user_id = message.from_user.id
         saved_manga = await get_watchlist(user_id, "manga")
-        
-        if not saved_manga: 
-            return await message.reply("🥺 **Your Manga Library is empty!**\n\n🔍 Search for a manga and click **📁 ADD TO LIBRARY** to save it here.")
+        if not saved_manga: return await message.reply("🥺 **Your Manga Library is empty!**")
             
         text = "**📚 Your Saved Manga & Manhwa:**\n\n"
         bot_username = client.me.username if client.me else temp.U_NAME
-        
         for item in saved_manga:
             title = item.get('title', 'Unknown')
             safe_link = title.replace(" ", "-")
             text += f"▪️ <a href='https://t.me/{bot_username}?start=getfile-{safe_link}'>**{title}**</a>\n\n"
             
-        pic = random.choice(PICS) if PICS else "https://envs.sh/ZUb.png?2ftEB=1"
-        await message.reply_photo(photo=pic, caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
-    except Exception as e:
-        logger.error(f"Library Error: {e}")
-        await message.reply("❌ Error fetching Library. Please try again.")
+        await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
+    except Exception: await message.reply("❌ Error fetching Library.")
 
 # ==========================================
 # 📅 ONGOING 7-DAYS UI 
@@ -368,13 +393,11 @@ def get_ongoing_keyboard(category):
 
 @Client.on_message(filters.command(["ongoing", "todayschedule", "schedule"]))
 async def ongoing_anime_cmd(client, message):
-    text = "**📅 Select a day to view the Anime Release Schedule:**"
-    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=get_ongoing_keyboard("anime"))
+    await message.reply_photo(photo=random.choice(PICS), caption="**📅 Select a day to view the Release Schedule:**", reply_markup=get_ongoing_keyboard("anime"))
 
 @Client.on_message(filters.command("ongoing_manga"))
 async def ongoing_manga_cmd(client, message):
-    text = "**📅 Select a day to view Ongoing Manga:**"
-    await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=get_ongoing_keyboard("manga"))
+    await message.reply_photo(photo=random.choice(PICS), caption="**📅 Select a day to view Ongoing Manga:**", reply_markup=get_ongoing_keyboard("manga"))
 
 @Client.on_callback_query(filters.regex(r"^ongoing_anime_"))
 async def ongoing_anime_cb(client, query):
@@ -430,13 +453,8 @@ async def ongoing_manga_cb(client, query):
 async def find_anime_cb(client, query):
     title = query.matches[0].group(1)
     await query.answer(f"Searching database for: {title}...", show_alert=False)
-    
     msg = query.message
     msg.text = title
     msg.from_user = query.from_user
-    
-    try:
-        await auto_filter(client, msg, req_cat=None)
-    except Exception as e:
-        logger.error(f"Error triggering auto_filter: {e}")
-        await client.send_message(query.message.chat.id, "❌ Error searching for the anime.")
+    try: await auto_filter(client, msg, req_cat=None)
+    except Exception: await client.send_message(query.message.chat.id, "❌ Error searching for the anime.")
