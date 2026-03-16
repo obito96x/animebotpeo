@@ -6,7 +6,6 @@ from pyrogram.errors import FloodWait
 from database.users_chats_db import db
 from database.ia_filterdb import Media, Media2 
 from database.watchlist_db import add_to_watchlist, remove_from_watchlist, get_autodelete_time, get_sticker
-from database.database import ProObito
 from utils import temp, get_settings
 from info import *
 
