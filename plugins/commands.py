@@ -3,9 +3,10 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 
-from database.watchlist_db import get_watchlist, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker
+from database.watchlist_db import get_watchlist, set_autodelete_time, get_autodelete_time, set_sticker, get_sticker, settings_col
 from database.ia_filterdb import Media, Media2
-from database.users_chats_db import db 
+from database.users_chats_db import db
+from database.database import ProObito
 from plugins.pmfilter import auto_filter 
 from info import *
 from utils import temp
@@ -14,12 +15,8 @@ logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 BATCH_FILES = {}
 OWNER_USERNAME = environ.get('OWNER_USERNAME', 'i_killed_my_clan')
-
 PICS = (os.environ.get("PICS", "https://envs.sh/ZUb.png?2ftEB=1 https://envs.sh/ZUi.png?KNgjn=1 https://envs.sh/oD5.jpg https://envs.sh/7nm.jpg https://envs.sh/Chb.jpg")).split()
 
-# =========================================
-# ⏱️ VIP AUTO DELETE LOGIC
-# =========================================
 def convert_time(duration_seconds: int) -> str:
     periods = [('Yᴇᴀʀ', 31536000), ('Mᴏɴᴛʜ', 2592000), ('Dᴀʏ', 86400), ('Hᴏᴜʀ', 3600), ('Mɪɴᴜᴛᴇ', 60), ('Sᴇᴄᴏɴᴅ', 1)]
     parts = []
@@ -53,9 +50,6 @@ async def auto_del_notification(client, msg_chat_id, messages, delay_time, trans
             await temp_msg.edit_text("<b><blockquote>Pʀᴇᴠɪᴏᴜs Mᴇssᴀɢᴇ ᴡᴀs Dᴇʟᴇᴛᴇᴅ 🗑</blockquote></b>")
     except Exception: pass
 
-# =========================================
-# 🚀 SEARCH CATEGORY ROUTERS
-# =========================================
 @Client.on_message(filters.command(["search", "s"]))
 async def search_all(client, message):
     if len(message.command) < 2: return await message.reply_text("<b>❌ Provide a name!\nExample:</b> `/search Naruto`")
@@ -77,9 +71,6 @@ async def search_manga(client, message):
     try: await auto_filter(client, message, req_cat="manga") 
     except Exception as e: await message.reply_text(f"<b>❌ Error:</b> {e}")
 
-# =========================================
-# 🚀 START COMMAND & FILE DELIVERY
-# =========================================
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
     if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
@@ -160,21 +151,35 @@ async def start_cb(client, query):
     await query.message.edit_reply_markup(reply_markup=buttons)
 
 # =========================================
-# ⚙️ ADMIN ON-BOT SETTINGS (UI Generators)
+# ⚙️ ADMIN UPDATE CHANNEL LOGIC
+# =========================================
+@Client.on_message(filters.command("addupdate") & filters.user(ADMINS))
+async def add_update_chnl(client, message):
+    if len(message.command) < 2: return await message.reply("⚠️ Usage: `/addupdate -100123456789`")
+    try:
+        chat_id = int(message.command[1])
+        await settings_col.update_one({"id": "bot_settings"}, {"$addToSet": {"update_channels": chat_id}}, upsert=True)
+        await message.reply(f"✅ Successfully added `{chat_id}` to Update Channels!")
+    except Exception: await message.reply("⚠️ Invalid Chat ID")
+
+@Client.on_message(filters.command("delupdate") & filters.user(ADMINS))
+async def del_update_chnl(client, message):
+    if len(message.command) < 2: return await message.reply("⚠️ Usage: `/delupdate -100123456789`")
+    try:
+        chat_id = int(message.command[1])
+        await settings_col.update_one({"id": "bot_settings"}, {"$pull": {"update_channels": chat_id}})
+        await message.reply(f"✅ Successfully removed `{chat_id}` from Update Channels!")
+    except Exception: await message.reply("⚠️ Invalid Chat ID")
+
+# =========================================
+# ⚙️ ADMIN ON-BOT SETTINGS
 # =========================================
 async def get_approve_ui(chat_id):
     status = await ProObito.is_group_approved(chat_id)
     status_text = "Eɴᴀʙʟᴇᴅ ✅" if status else "Dɪsᴀʙʟᴇᴅ ✖️"
     btn_text = "❌ Dɪsᴀʙʟᴇ Aᴘᴘʀᴏᴠᴀʟ" if status else "✅ Eɴᴀʙʟᴇ Aᴘᴘʀᴏᴠᴀʟ"
-    text = (
-        "🤖 **𝗚𝗿𝗼𝘂𝗽 𝗔𝗽𝗽𝗿𝗼𝘃𝗮𝗹 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n"
-        f"🛡️ ᴄᴜʀʀᴇɴᴛ sᴛᴀᴛᴜs : {status_text}\n\n"
-        "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
-    )
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton(btn_text, callback_data=f"toggle_approve_{chat_id}")],
-        [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data=f"approve_refresh_{chat_id}"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]
-    ])
+    text = f"🤖 **𝗚𝗿𝗼𝘂𝗽 𝗔𝗽𝗽𝗿𝗼𝘃𝗮𝗹 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n🛡️ ᴄᴜʀʀᴇɴᴛ sᴛᴀᴛᴜs : {status_text}\n\nᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton(btn_text, callback_data=f"toggle_approve_{chat_id}")], [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data=f"approve_refresh_{chat_id}"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]])
     return text, markup
 
 async def get_autodel_ui():
@@ -183,16 +188,8 @@ async def get_autodel_ui():
     time_str = convert_time(timer_secs) if timer_secs > 0 else "0 Sᴇᴄᴏɴᴅ"
     status_text = "Eɴᴀʙʟᴇᴅ ✅" if status else "Dɪsᴀʙʟᴇᴅ ✖️"
     toggle_btn = "❌ Dɪsᴀʙʟᴇ" if status else "✅ Eɴᴀʙʟᴇ"
-    text = (
-        "🤖 **𝗔𝗨𝗧𝗢 𝗗𝗘𝗟𝗘𝗧𝗘 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n"
-        f"🗑️ ᴀᴜᴛᴏ ᴅᴇʟᴇᴛᴇ ᴍᴏᴅᴇ: {status_text}\n"
-        f"⏱ ᴅᴇʟᴇᴛᴇ ᴛɪᴍᴇʀ: {time_str}\n\n"
-        "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
-    )
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton(toggle_btn, callback_data="autodel_toggle"), InlineKeyboardButton("⏱ Sᴇᴛ Tɪᴍᴇʀ", callback_data="autodel_settimer")],
-        [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="autodel_refresh"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]
-    ])
+    text = f"🤖 **𝗔𝗨𝗧𝗢 𝗗𝗘𝗟𝗘𝗧𝗘 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n🗑️ ᴀᴜᴛᴏ ᴅᴇʟᴇᴛᴇ ᴍᴏᴅᴇ: {status_text}\n⏱ ᴅᴇʟᴇᴛᴇ ᴛɪᴍᴇʀ: {time_str}\n\nᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton(toggle_btn, callback_data="autodel_toggle"), InlineKeyboardButton("⏱ Sᴇᴛ Tɪᴍᴇʀ", callback_data="autodel_settimer")], [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="autodel_refresh"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]])
     return text, markup
 
 async def get_sticker_ui():
@@ -200,16 +197,8 @@ async def get_sticker_ui():
     status = bool(stk_id)
     status_text = "Eɴᴀʙʟᴇᴅ ✅" if status else "Dɪsᴀʙʟᴇᴅ ✖️"
     toggle_btn = "❌ Dɪsᴀʙʟᴇ" if status else "✅ Eɴᴀʙʟᴇ"
-    text = (
-        "🤖 **Stickers 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n"
-        f"🎯 sticker ᴍᴏᴅᴇ: {status_text}\n"
-        f"🔖 Cᴜʀʀᴇɴᴛ Sᴛɪᴄᴋᴇʀ: `{'Set ✅' if status else 'None ✖️'}`\n\n"
-        "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
-    )
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton(toggle_btn, callback_data="sticker_toggle"), InlineKeyboardButton("🔖 Sᴇᴛ Sᴛɪᴄᴋᴇʀ", callback_data="sticker_settimer")],
-        [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="sticker_refresh"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]
-    ])
+    text = f"🤖 **Stickers 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦** ⚙️\n\n🎯 sticker ᴍᴏᴅᴇ: {status_text}\n🔖 Cᴜʀʀᴇɴᴛ Sᴛɪᴄᴋᴇʀ: `{'Set ✅' if status else 'None ✖️'}`\n\nᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ᴛᴏ ᴄʜᴀɴɢᴇ sᴇᴛᴛɪɴɢs"
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton(toggle_btn, callback_data="sticker_toggle"), InlineKeyboardButton("🔖 Sᴇᴛ Sᴛɪᴄᴋᴇʀ", callback_data="sticker_settimer")], [InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="sticker_refresh"), InlineKeyboardButton("✖️ Cʟᴏsᴇ", callback_data="close_data")]])
     return text, markup
 
 @Client.on_message(filters.command("approve") & (filters.group | filters.private))
@@ -264,7 +253,6 @@ async def browse_callback(client, query):
 async def show_letter_results(client, query):
     _, category, letter = query.data.split("_")
     await query.answer("Fetching titles... ⏳", show_alert=False)
-    
     filenames1 = await Media.collection.distinct("file_name", {"category": category})
     filenames2 = await Media2.collection.distinct("file_name", {"category": category})
     all_filenames = list(set(filenames1 + filenames2))
@@ -273,12 +261,15 @@ async def show_letter_results(client, query):
     for f_name in all_filenames:
         if not f_name: continue
         clean_name = f_name
+        clean_name = re.sub(r'(?i)(?:\[?s|season)\s*0*\d+.*?(?:e|ep|episode)\s*0*\d+(?:\.\d+)?]?', '', clean_name)
+        clean_name = re.sub(r'(?i)(?:\[?s|season)\s*0*\d+]?', '', clean_name)
+        clean_name = re.sub(r'(?i)(?:\[C|\[S|ch[\-\s]*|ep[\-\s]*|vol[\-\s]*|v|e)(?!s\d)0*\d+(?:\.\d+)?]?', '', clean_name)
         clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', clean_name) 
         clean_name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr|jpg|png)$', '', clean_name, flags=re.IGNORECASE)
-        clean_name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season|s\d+)\b', clean_name)[0] 
-        clean_name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web-?dl|rip|dual|audio|hindi|english|subbed|dubbed|x264|x265|hevc|ddp2?\.?\d?|aac)\b', '', clean_name)
+        clean_name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web-?dl|rip|dual|multi|audio|hindi|english|subbed|dubbed|dub|sub|x264|x265|hevc|ddp2?\.?\d?|aac)\b', '', clean_name)
         clean_name = re.sub(r'[^a-zA-Z0-9\s]', ' ', clean_name).strip() 
-        clean_name = " ".join(clean_name.split()).title()
+        clean_name = re.sub(r'\s+', ' ', clean_name)
+        clean_name = clean_name.strip('- ').title()
         if not clean_name: continue
             
         first_char = clean_name[0].upper()
@@ -304,7 +295,7 @@ async def show_letter_results(client, query):
 # =========================================
 @Client.on_message(filters.command("help"))
 async def help_cmd(client, message):
-    text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga\n➤ `/index` — Start Auto Indexer"
+    text = "**🤖 Bot Commands:**\n\n➤ `/search <name>` — Find Anime or Manga\n➤ `/anime <name>` — Find Anime ONLY\n➤ `/manga <name>` — Find Manga ONLY\n➤ `/ongoing` — Airing Anime\n➤ `/watchlist` — Saved Anime\n➤ `/library` — Saved Manga"
     await message.reply_photo(photo=random.choice(PICS), caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_data")]]))
 
 @Client.on_message(filters.command("request") & filters.private)
@@ -313,12 +304,6 @@ async def request_cmd(client, message):
     req_name = message.text.split(" ", 1)[1]
     if INDEX_REQ_CHANNEL: await client.send_message(INDEX_REQ_CHANNEL, f"**🆕 New Request:**\n\n**Name:** `{req_name}`\n**Requested By:** {message.from_user.mention}")
     await message.reply(f"✅ Your request for **{req_name}** has been sent!")
-
-@Client.on_message(filters.command("index") & filters.user(ADMINS))
-async def index_cmd_shortcut(client, message):
-    # Sends random pic as requested for index command
-    text = "**⚡ AUTO INDEXING SYSTEM**\n\nSend `/index [Channel ID]` to start saving files.\n💡 *Note:* The bot will automatically group matching seasons and apply the 70% name match algorithm."
-    await message.reply_photo(photo=random.choice(PICS), caption=text)
 
 # ==========================================
 # ⭐ WATCHLIST & LIBRARY
