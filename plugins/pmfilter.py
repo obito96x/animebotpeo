@@ -6,6 +6,7 @@ from pyrogram.errors import FloodWait
 from database.users_chats_db import db
 from database.ia_filterdb import Media, Media2 
 from database.watchlist_db import add_to_watchlist, remove_from_watchlist, get_autodelete_time, get_sticker
+from database.database import ProObito
 from utils import temp, get_settings
 from info import *
 
@@ -53,13 +54,21 @@ async def auto_del_notification(client, msg_chat_id, messages, delay_time, trans
     except Exception: pass
 
 # ==========================================
-# 🧠 EXTRACTOR (FLAWLESS SEASON & 70% MATCH LOGIC)
+# 🧠 EXTRACTOR (AUDIO, SEASON & 70% MATCH)
 # ==========================================
-def extract_and_clean(filename):
+def extract_file_info(filename):
     season = 1
     ep_num = 0.0
-    
-    s_e_match = re.search(r'(?i)(?:s|season)\s*0*(\d+).*?(?:e|ep|episode)\s*0*(\d+(?:\.\d+)?)', filename)
+    audio_tags = []
+
+    lower_name = filename.lower()
+    if 'multi' in lower_name: audio_tags.append("Multi")
+    elif 'dual' in lower_name: audio_tags.append("Dual")
+    elif 'dub' in lower_name: audio_tags.append("Dub")
+    elif 'sub' in lower_name: audio_tags.append("Sub")
+    audio = " ".join(audio_tags)
+
+    s_e_match = re.search(r'(?i)(?:\[?s|season)\s*0*(\d+).*?(?:e|ep|episode)\s*0*(\d+(?:\.\d+)?)]?', filename)
     if s_e_match:
         season = int(s_e_match.group(1))
         ep_num = float(s_e_match.group(2))
@@ -74,14 +83,19 @@ def extract_and_clean(filename):
             if ep_match: ep_num = float(ep_match.group(1))
 
     name = filename
+    # Remove S02 E12 formats completely from title before cleaning
+    name = re.sub(r'(?i)(?:\[?s|season)\s*0*\d+.*?(?:e|ep|episode)\s*0*\d+(?:\.\d+)?]?', '', name)
+    name = re.sub(r'(?i)(?:\[?s|season)\s*0*\d+]?', '', name)
+    name = re.sub(r'(?i)(?:\[C|\[S|ch[\-\s]*|ep[\-\s]*|vol[\-\s]*|v|e)(?!s\d)0*\d+(?:\.\d+)?]?', '', name)
+    
     name = re.sub(r'\[.*?\]|\(.*?\)', '', name) 
     name = re.sub(r'\.(mkv|mp4|avi|mpe?g|pdf|cbz|cbr|jpg|png)$', '', name, flags=re.IGNORECASE)
-    name = re.split(r'(?i)(?:\s-\s)?\b(?:ch|chapter|ep|episode|vol|volume|season|s\d+)\b', name)[0] 
-    name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web-?dl|rip|dual|audio|hindi|english|subbed|dubbed|x264|x265|hevc|ddp2?\.?\d?|aac)\b', '', name)
+    name = re.sub(r'(?i)\b(1080p|720p|480p|amzn|web-?dl|rip|dual|multi|audio|hindi|english|subbed|dubbed|dub|sub|x264|x265|hevc|ddp2?\.?\d?|aac)\b', '', name)
     name = re.sub(r'[^a-zA-Z0-9\s]', ' ', name).strip() 
-    name = " ".join(name.split()).title()
+    name = re.sub(r'\s+', ' ', name)
+    name = name.strip('- ').title()
 
-    return name if name else "Unknown", season, ep_num
+    return name if name else "Unknown", season, ep_num, audio
 
 def is_similar(t1, t2):
     stop_words = {'the', 'a', 'an', 'of', 'and', 'in', 'to', 'with', 'for', 'is', 'at', 'on', 'part', 'season'}
@@ -91,7 +105,6 @@ def is_similar(t1, t2):
     s1, s2 = set(w1), set(w2)
     intersection = s1.intersection(s2)
     if min(len(s1), len(s2)) == 0: return False
-    # EXACTLY 70% MATCH ALGORITHM
     return (len(intersection) / min(len(s1), len(s2))) >= 0.70
 
 def get_emoji(filename):
@@ -102,7 +115,7 @@ def get_emoji(filename):
     return '📙'
 
 # ==========================================
-# 🌐 ANILIST 16:9 COVER
+# 🌐 ANILIST 16:9 COVER (RANDOM PICKER)
 # ==========================================
 async def fetch_anilist_16x9(query, category="anime"):
     url = "https://graphql.anilist.co"
@@ -147,7 +160,7 @@ async def auto_filter(client, msg, req_cat=None):
     grouped_titles = {}
     
     for f in files:
-        title, season, ep = extract_and_clean(f.file_name)
+        title, season, ep, aud = extract_file_info(f.file_name)
         is_manga = any(x in f.file_name.lower() for x in ['.pdf', '.cbz', '.cbr', 'manga', 'ch '])
         cat = "manga" if is_manga else "anime"
         
@@ -167,7 +180,7 @@ async def auto_filter(client, msg, req_cat=None):
             grouped_titles[found_key]["seasons"][season] = {"files": [], "seen_eps": set()}
             
         if ep not in grouped_titles[found_key]["seasons"][season]["seen_eps"]:
-            grouped_titles[found_key]["seasons"][season]["files"].append((f, ep))
+            grouped_titles[found_key]["seasons"][season]["files"].append((f, ep, aud))
             grouped_titles[found_key]["seasons"][season]["seen_eps"].add(ep)
             
     if not grouped_titles: return await m.edit(f"<b>❌ No {req_cat if req_cat else 'files'} found matching keywords!</b>")
@@ -186,7 +199,12 @@ async def auto_filter(client, msg, req_cat=None):
     search_pic = None
     if titles:
         top_ani = await fetch_anilist_16x9(titles[0], grouped_titles[titles[0]]["category"])
-        if top_ani: search_pic = top_ani.get("bannerImage") or top_ani.get("coverImage", {}).get("extraLarge")
+        if top_ani:
+            imgs = []
+            if top_ani.get("bannerImage"): imgs.append(top_ani.get("bannerImage"))
+            if top_ani.get("coverImage", {}).get("extraLarge"): imgs.append(top_ani.get("coverImage", {}).get("extraLarge"))
+            if imgs: search_pic = random.choice(imgs)
+            
     if not search_pic: search_pic = random.choice(PICS)
 
     cap = f"🎯 <b>SEARCH RESULTS</b> ❞\n\n▸ <b>QUERY:</b> {search_clean}\n▸ <b>RESULTS:</b> {len(titles)} MATCHES\n\n<i>SELECT AN ITEM TO VIEW SEASONS ↓</i>"
@@ -217,7 +235,15 @@ async def select_title_cb(client, query):
         
         anilist_title = anime_info.get('title', {})
         display_title = anilist_title.get('english') or anilist_title.get('romaji') or selected_title
-        cover = anime_info.get("bannerImage") or anime_info.get("coverImage", {}).get("extraLarge") or random.choice(PICS)
+        
+        cover = None
+        if anime_info:
+            imgs = []
+            if anime_info.get("bannerImage"): imgs.append(anime_info.get("bannerImage"))
+            if anime_info.get("coverImage", {}).get("extraLarge"): imgs.append(anime_info.get("coverImage", {}).get("extraLarge"))
+            if imgs: cover = random.choice(imgs)
+        if not cover: cover = random.choice(PICS)
+            
         atype = "Manhwa/Manga" if cat == "manga" else str(anime_info.get('format', 'TV Series')).replace('_',' ')
         status = anime_info.get('status', 'RELEASING').title()
         genres = ", ".join(anime_info.get('genres', ['Action', 'Fantasy'])[:3])
@@ -242,7 +268,7 @@ async def select_title_cb(client, query):
         await query.answer("❌ Error processing details.", show_alert=True)
 
 # ==========================================
-# 🔢 GRID (EPISODES)
+# 🔢 GRID (EPISODES & AUDIO TAGS)
 # ==========================================
 @Client.on_callback_query(filters.regex(r"^sseason#"))
 async def swatch_cb(client, query):
@@ -270,7 +296,7 @@ async def swatch_cb(client, query):
         row = []
         bot_username = client.me.username if client.me else temp.U_NAME
         
-        for f, ep_num in current_chunk:
+        for f, ep_num, aud in current_chunk:
             fmt_ep = str(int(ep_num)) if ep_num == int(ep_num) else str(ep_num)
             icon = get_emoji(f.file_name)
             
@@ -278,7 +304,11 @@ async def swatch_cb(client, query):
             if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
             temp.FILES_CACHE[short_id] = f.file_id
             
-            row.append(InlineKeyboardButton(f"{fmt_ep} {icon}", url=f"https://t.me/{bot_username}?start=file_{short_id}"))
+            # Add AUDIO Tag to Button
+            lbl = f"{fmt_ep} {icon}"
+            if aud: lbl = f"[{aud}] {lbl}"
+            
+            row.append(InlineKeyboardButton(lbl, url=f"https://t.me/{bot_username}?start=file_{short_id}"))
             if len(row) == 3:
                 btn.append(row)
                 row = []
@@ -298,7 +328,7 @@ async def swatch_cb(client, query):
         await query.answer("❌ Error processing grid.", show_alert=True)
 
 # ==========================================
-# 🔙 OTHER HANDLERS
+# 🔙 BACK & DOWNLOAD ALL (ACTUAL FILES)
 # ==========================================
 @Client.on_callback_query(filters.regex(r"^sback#"))
 async def back_to_search(client, query):
@@ -318,7 +348,11 @@ async def back_to_search(client, query):
     search_pic = None
     if titles:
         top_ani = await fetch_anilist_16x9(titles[0], grouped_titles[titles[0]]["category"])
-        if top_ani: search_pic = top_ani.get("bannerImage") or top_ani.get("coverImage", {}).get("extraLarge")
+        if top_ani:
+            imgs = []
+            if top_ani.get("bannerImage"): imgs.append(top_ani.get("bannerImage"))
+            if top_ani.get("coverImage", {}).get("extraLarge"): imgs.append(top_ani.get("coverImage", {}).get("extraLarge"))
+            if imgs: search_pic = random.choice(imgs)
     if not search_pic: search_pic = random.choice(PICS)
 
     await query.message.edit_media(InputMediaPhoto(media=search_pic, caption=cap))
@@ -337,38 +371,32 @@ async def downall_cb(bot, query):
     files_data.sort(key=lambda x: safe_float(x[1]))
     current_chunk = files_data[offset:offset+30]
     
-    await query.answer("Sending files to your PM... ⏳", show_alert=False)
-    bot_username = bot.me.username if bot.me else temp.U_NAME
-    text = f"**Batch Link for {selected_title} (Season {season})**\n\n👇 Click below to get all files in your PM:\n"
+    await query.answer("Sending actual files to your PM... ⏳", show_alert=False)
     
-    for f, ep in current_chunk:
-        short_id = str(uuid.uuid4())[:10]
-        if not hasattr(temp, 'FILES_CACHE'): temp.FILES_CACHE = {}
-        temp.FILES_CACHE[short_id] = f.file_id
-        text += f"▪️ <a href='https://t.me/{bot_username}?start=file_{short_id}'>Episode {ep}</a>\n"
+    sent_msgs = []
+    for f, ep, aud in current_chunk:
+        try:
+            m = await bot.send_cached_media(chat_id=query.from_user.id, file_id=f.file_id)
+            sent_msgs.append(m)
+            await asyncio.sleep(0.5)
+        except FloodWait as e:
+            await asyncio.sleep(e.value + 1)
+            m = await bot.send_cached_media(chat_id=query.from_user.id, file_id=f.file_id)
+            sent_msgs.append(m)
+        except Exception: pass
         
-    await bot.send_message(query.from_user.id, text, disable_web_page_preview=True)
+    timer = await get_autodelete_time()
+    stk_id = await get_sticker()
+    
+    if stk_id and sent_msgs:
+        s_msg = await bot.send_sticker(query.from_user.id, stk_id)
+        sent_msgs.append(s_msg)
+        
+    if timer > 0 and sent_msgs:
+        search_link = f"getfile-{selected_title.replace(' ', '-')}"
+        asyncio.create_task(auto_del_notification(bot, query.from_user.id, sent_msgs, timer, transfer=search_link))
 
 @Client.on_callback_query(filters.regex(r"^close_data$"))
 async def close_cb(bot, query):
     await query.message.delete()
-
-@Client.on_callback_query(filters.regex(r"^addwatch#"))
-async def addwatch_cb(bot, query):
-    _, title, cat = query.data.split("#")
-    user_id = query.from_user.id
-    await add_to_watchlist(user_id, title, cat)
-    await query.answer(f"⭐ Added to {'Library' if cat == 'manga' else 'Watchlist'}!", show_alert=True)
-    new_btn = list(query.message.reply_markup.inline_keyboard)
-    new_btn[1] = [InlineKeyboardButton("➖ REMOVE", callback_data=f"remwatch#{title}#{cat}")]
-    await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_btn))
-
-@Client.on_callback_query(filters.regex(r"^remwatch#"))
-async def remwatch_cb(bot, query):
-    _, title, cat = query.data.split("#")
-    user_id = query.from_user.id
-    await remove_from_watchlist(user_id, title, cat)
-    await query.answer(f"➖ Removed from {'Library' if cat == 'manga' else 'Watchlist'}!", show_alert=True)
-    new_btn = list(query.message.reply_markup.inline_keyboard)
-    new_btn[1] = [InlineKeyboardButton("📁 ADD" if cat == 'manga' else "⭐ ADD", callback_data=f"addwatch#{title}#{cat}")]
-    await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_btn))
+    
